@@ -1,0 +1,34 @@
+{
+  "name": "prototype",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "CONTAINER_USER": "prototype",
+      "CONTAINER_GROUP": "prototype",
+      "ESP_BOARD": "esp32s3"
+    }
+  },
+  // https://github.com/serialport/serialport-rs/issues/153
+  "runArgs": [
+    "--mount",
+    "type=bind,source=/run/udev,target=/run/udev,readonly"
+  ],
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "lldb.executable": "/usr/bin/lldb",
+        "files.watcherExclude": {
+          "**/target/**": true
+        }
+      },
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "ms-vscode.cpptools",
+        "Wokwi.wokwi-vscode"
+      ]
+    }
+  },
+  "forwardPorts": [3333, 8000],
+  "remoteUser": "prototype"
+}

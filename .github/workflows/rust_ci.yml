@@ -1,0 +1,45 @@
+name: Continuous Integration
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build-embedded:
+    name: Release embedded targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32s3]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: ${{ matrix.target }}
+          ldproxy: true
+      - name: Enable caching
+        uses: Swatinem/rust-cache@v2
+      - name: Build embedded (${{ matrix.target }})
+        run: cargo build --release --target xtensa-${{ matrix.target }}-espidf --package program
+
+  build-server:
+    name: Release server targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Enable caching
+        uses: Swatinem/rust-cache@v2
+      - name: Build server (${{ matrix.target }})
+        run: cargo build --release --target ${{ matrix.target }} --package server

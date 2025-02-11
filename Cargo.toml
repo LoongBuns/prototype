@@ -1,0 +1,17 @@
+[workspace]
+members = ["program", "server"]
+resolver = "2"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.dev.package.program]
+opt-level = "z"
+
+[profile.release]
+opt-level = 3
+debug = false
+
+[profile.release.package.program]
+opt-level = "s"

@@ -1,0 +1,6 @@
+[package]
+name = "server"
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2021"
+resolver = "2"
