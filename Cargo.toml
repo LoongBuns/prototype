@@ -1,6 +1,10 @@
 [workspace]
-members = ["program", "server"]
+members = ["program", "protocol", "server"]
+default-members = ["protocol", "server"]
 resolver = "2"
+
+[workspace.dependencies]
+protocol.path = "./protocol"
 
 [profile.dev]
 opt-level = 0

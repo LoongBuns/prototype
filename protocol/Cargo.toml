@@ -1,10 +1,9 @@
 [package]
-name = "server"
+name = "protocol"
 version = "0.1.0"
 authors = ["Sieluna <seele.peng@gmail.com>"]
 edition = "2021"
 resolver = "2"
 
 [dependencies]
-protocol.workspace = true
-tokio = { version = "1", features = ["full"] }
+thiserror = { version = "2", default-features = false }
