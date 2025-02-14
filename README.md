@@ -1,19 +1,16 @@
-```sh
-which idf.py >/dev/null || {
-    source ~/export-esp.sh >/dev/null 2>&1
-}
+# Prototype
 
-TARGET="xtensa-esp32s3-espidf"
+This is a prototype of wasm on esp.
 
-cargo +esp build --release --target $ESP_TARGET --package program
-```
+## Usage
+
+To use this script:
 
 ```sh
-cargo +stable build --release --package server
+./build.sh [--flash | -f] [release | debug]
 ```
 
-```sh
-BUILD_EXE="target/xtensa-esp32s3-espidf/release/program"
+### Parameters
 
-web-flash --chip esp32s3 $BUILD_EXE
-```
+* release or debug: Specify the build mode (default: debug).
+* -f or --flash: Enable flashing of the built firmware to the ESP32-S3 device (optional).
