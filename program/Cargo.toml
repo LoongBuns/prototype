@@ -19,7 +19,7 @@ esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-
 log = "0.4"
 protocol.workspace = true
 thiserror = "2"
-wamr-rust-sdk = { git = "https://github.com/bytecodealliance/wamr-rust-sdk", features = ["esp-idf"]}
+wamr-rust-sdk = { git = "https://github.com/bytecodealliance/wamr-rust-sdk", features = ["esp-idf"] }
 
 [build-dependencies]
 embuild = "0.33"

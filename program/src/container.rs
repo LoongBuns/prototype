@@ -85,7 +85,7 @@ fn execute_wasm(binary: Vec<u8>, params: Vec<u8>) -> Result<Vec<u8>, Error> {
     let wasm_params = deserialize_wasm_values(&params);
 
     let runtime = Runtime::new()?;
-    let mut module = Module::from_vec(&runtime, binary, "container")?;
+    let module = Module::from_vec(&runtime, binary, "container")?;
 
     let instance = Instance::new(&runtime, &module, 1024 * 64)?;
 
@@ -125,9 +125,9 @@ fn handle_response(mut socket: TcpStream) -> Result<(), Error> {
 pub fn setup_container(host: &str, port: u16) -> Result<(), Error> {
     let addr = format!("{}:{}", host, port);
 
-    let mut stream = TcpStream::connect(&addr)?;
+    let stream = TcpStream::connect(&addr)?;
 
-    handle_response(stream);
+    handle_response(stream)?;
 
     Ok(())
 }
