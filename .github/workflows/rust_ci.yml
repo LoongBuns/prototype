@@ -27,7 +27,7 @@ jobs:
       - name: Enable caching
         uses: Swatinem/rust-cache@v2
       - name: Build embedded (${{ matrix.target }})
-        run: cargo build --release --target xtensa-${{ matrix.target }}-espidf --package program
+        run: cd program && cargo build --release --target xtensa-${{ matrix.target }}-espidf
 
   build-server:
     name: Release server targets
@@ -42,4 +42,4 @@ jobs:
       - name: Enable caching
         uses: Swatinem/rust-cache@v2
       - name: Build server (${{ matrix.target }})
-        run: cargo build --release --target ${{ matrix.target }} --package server
+        run: cd server && cargo build --release --target ${{ matrix.target }}

@@ -13,7 +13,7 @@ EMBEDDED_TARGET=xtensa-$EMBEDDED_MODEL-espidf
 while [ $# -gt 0 ]; do
     case "$1" in
         "release" | "debug")
-            MODE="$1"
+            BUILD_MODE="$1"
             shift
             ;;
         "-f" | "--flash")
@@ -27,14 +27,14 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "$MODE" = "release" ]; then
-    cargo +esp build --release --target $EMBEDDED_TARGET --package program --config program/.cargo/config.toml
-    cargo +stable build --release --package server
+if [ "$BUILD_MODE" = "release" ]; then
+    cd program && cargo +esp build --release --target $EMBEDDED_TARGET && cd ..
+    cd server && cargo +stable build --release && cd ..
 else
-    cargo +esp build --target $EMBEDDED_TARGET --package program --config program/.cargo/config.toml
-    cargo +stable build --package server
+    cd program && cargo +esp build --target $EMBEDDED_TARGET && cd ..
+    cd server && cargo +stable build && cd ..
 fi
 
 if $FLASH; then
-    web-flash --chip $EMBEDDED_MODEL target/$EMBEDDED_TARGET/$BUILD_MODE/program
+    web-flash --chip $EMBEDDED_MODEL program/target/$EMBEDDED_TARGET/$BUILD_MODE/program
 fi
