@@ -1,88 +1,22 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
-use protocol::Message;
+use protocol::{Message, Type};
 use wamr_rust_sdk::{
     function::Function, instance::Instance, module::Module, runtime::Runtime, value::WasmValue
 };
 
 use crate::Error;
 
-fn serialize_wasm_values(values: &[WasmValue]) -> Vec<u8> {
-    let mut buf = Vec::new();
-
-    buf.extend_from_slice(&(values.len() as u16).to_be_bytes());
-    for val in values {
-        let tag: u8 = match val {
-            WasmValue::Void   => 0,
-            WasmValue::I32(_) => 1,
-            WasmValue::I64(_) => 2,
-            WasmValue::F32(_) => 3,
-            WasmValue::F64(_) => 4,
-            WasmValue::V128(_) => 5,
-        };
-        buf.push(tag);
-
-        let encoded = val.encode();
-
-        buf.push(encoded.len() as u8);
-        for u in encoded {
-            buf.extend_from_slice(&u.to_be_bytes());
-        }
-    }
-
-    buf
-}
-
-fn deserialize_wasm_values(data: &[u8]) -> Vec<WasmValue> {
-    let mut values = Vec::new();
-    if data.len() < 2 {
-        return values;
-    }
-
-    let count = u16::from_be_bytes([data[0], data[1]]) as usize;
-    let mut offset = 2;
-    for _ in 0..count {
-        if offset >= data.len() {
-            break;
-        }
-
-        let tag = data[offset];
-        offset += 1;
-        if offset >= data.len() {
-            break;
-        }
-
-        let len = data[offset] as usize;
-        offset += 1;
-
-        if offset + len * 4 > data.len() {
-            break;
-        }
-        let mut u32_vec = Vec::new();
-        for i in 0..len {
-            let start = offset + i * 4;
-            let u = u32::from_be_bytes(data[start..start+4].try_into().unwrap());
-            u32_vec.push(u);
-        }
-        offset += len * 4;
-
-        let value = match tag {
-            0 => WasmValue::Void,
-            1 => WasmValue::decode_to_i32(u32_vec),
-            2 => WasmValue::decode_to_i64(u32_vec),
-            3 => WasmValue::decode_to_f32(u32_vec),
-            4 => WasmValue::decode_to_f64(u32_vec),
-            5 => WasmValue::decode_to_v128(u32_vec),
-            _ => continue,
-        };
-        values.push(value);
-    }
-    values
-}
-
-fn execute_wasm(binary: Vec<u8>, params: Vec<u8>) -> Result<Vec<u8>, Error> {
-    let wasm_params = deserialize_wasm_values(&params);
+fn execute_wasm(binary: Vec<u8>, params: Vec<Type>) -> Result<Vec<Type>, Error> {
+    let wasm_params = params.iter().map(|f| match f {
+        Type::Void => WasmValue::Void,
+        Type::I32(v) => WasmValue::I32(*v),
+        Type::I64(v) => WasmValue::I64(*v),
+        Type::F32(v) => WasmValue::F32(*v),
+        Type::F64(v) => WasmValue::F64(*v),
+        Type::V128(v) => WasmValue::V128(*v),
+    }).collect();
 
     let runtime = Runtime::new()?;
     let module = Module::from_vec(&runtime, binary, "container")?;
@@ -93,7 +27,14 @@ fn execute_wasm(binary: Vec<u8>, params: Vec<u8>) -> Result<Vec<u8>, Error> {
 
     let wasm_result = function.call(&instance, &wasm_params)?;
 
-    let result = serialize_wasm_values(&wasm_result);
+    let result = wasm_result.iter().map(|f| match f {
+        WasmValue::Void => Type::Void,
+        WasmValue::I32(v) => Type::I32(*v),
+        WasmValue::I64(v) => Type::I64(*v),
+        WasmValue::F32(v) => Type::F32(*v),
+        WasmValue::F64(v) => Type::F64(*v),
+        WasmValue::V128(v) => Type::V128(*v),
+    }).collect();
     Ok(result)
 }
 

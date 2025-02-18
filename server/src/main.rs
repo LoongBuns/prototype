@@ -1,25 +1,15 @@
+mod loader;
+mod task;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use protocol::{Config, Message};
+use protocol::{Config, Message, Type};
+use task::{Task, TaskStatus};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-
-#[derive(Debug, Clone)]
-enum TaskStatus {
-    Queued,
-    Dispatched,
-    Completed,
-    Failed,
-}
-
-struct Task {
-    wasm_binary: Vec<u8>,
-    params: Vec<u8>,
-    status: TaskStatus,
-}
 
 #[derive(Clone)]
 struct ServerState {
@@ -92,7 +82,7 @@ async fn handle_request(mut socket: TcpStream, state: Arc<ServerState>) {
     }
 }
 
-async fn process_result(state: Arc<ServerState>, task_id: u64, result: &Vec<u8>) {
+async fn process_result(state: Arc<ServerState>, task_id: u64, result: &Vec<Type>) {
     let mut pending_tasks = state.pending_tasks.lock().await;
     if let Some(mut task) = pending_tasks.remove(&task_id) {
         task.status = if !result.is_empty() {

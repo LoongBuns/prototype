@@ -1,0 +1,16 @@
+{
+    "name": "task",
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "postinstall": "node bin/setup",
+        "build": "node bin/build"
+    },
+    "dependencies": {
+        "@use-gpu/live": "^0.12"
+    },
+    "devDependencies": {
+        "rollup": "^4",
+        "@rollup/plugin-node-resolve": "^16"
+    }
+}
