@@ -15,6 +15,16 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Self {
+        let host = option_env!("HOST").map_or_else(
+            || Arc::from("localhost"),
+            |host_str| Arc::from(host_str),
+        );
+
+        let port = option_env!("PORT").map_or_else(
+            || 3000,
+            |port_str| port_str.parse::<u16>().unwrap_or_else(|_| 3000),
+        );
+
         let wifi = option_env!("WIFI_SSID")
             .zip(option_env!("WIFI_PASSWORD"))
             .map(|(ssid, password)| Wifi {
@@ -23,18 +33,9 @@ impl Config {
             });
 
         Self {
+            host,
+            port,
             wifi,
-            ..Default::default()
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            host: Arc::from("0.0.0.0"),
-            port: 3000,
-            wifi: None,
         }
     }
 }

@@ -2,10 +2,10 @@ mod container;
 
 use std::io;
 
-use container::setup_container;
+use container::{execute_wasm, setup_container};
 use esp_idf_svc::{eventloop, hal, log as esp_log, nvs, sys, wifi};
 use log::{error, info};
-use protocol::{Config, Error as ProtocolError, Wifi};
+use protocol::{Config, Error as ProtocolError, Type, Wifi};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -58,6 +58,32 @@ fn main() {
                 }
             }
             Err(err) => error!("Wifi setup failed: {err}"),
+        }
+    } else {
+        // If no wifi, debug wasm runtime
+        // (module
+        //   (func (export "run") (param i32 i32) (result i32)
+        //     (local.get 0)
+        //     (local.get 1)
+        //     (i32.add)
+        //   )
+        // )
+        let binary = vec![
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x07, 0x01, 0x60, 0x02, 0x7f,
+            0x7f, 0x01, 0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e,
+            0x00, 0x00, 0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b,
+        ];
+        let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
+        let params: Vec<Type> = vec![Type::I32(10), Type::I32(20)];
+        
+        match execute_wasm(binary, params) {
+            Ok(result) => {
+                match result.first() {
+                    Some(value) => info!("10 + 20 = {:?}", value),
+                    None => error!("Wasm runtime execute fail with void result"),
+                }
+            }
+            Err(err) => error!("Wasm runtime crashed: {err}"),
         }
     }
 }

@@ -34,6 +34,6 @@
             ]
         }
     },
-    "forwardPorts": [3333, 8000],
+    "forwardPorts": [3000, 3333, 8000],
     "remoteUser": "prototype"
 }

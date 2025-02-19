@@ -52,7 +52,9 @@ fn main() {
 
             let indent = "        ";
             for (i, byte) in wasm_bytes.iter().enumerate() {
-                generated_code.push_str(indent);
+                if (i) % 12 == 0 {
+                    generated_code.push_str(indent);
+                }
                 generated_code.push_str(&format!("{}, ", byte));
                 if (i + 1) % 12 == 0 {
                     generated_code.push_str("\n");

@@ -8,7 +8,7 @@ use wamr_rust_sdk::{
 
 use crate::Error;
 
-fn execute_wasm(binary: Vec<u8>, params: Vec<Type>) -> Result<Vec<Type>, Error> {
+pub fn execute_wasm(binary: Vec<u8>, params: Vec<Type>) -> Result<Vec<Type>, Error> {
     let wasm_params = params.iter().map(|f| match f {
         Type::Void => WasmValue::Void,
         Type::I32(v) => WasmValue::I32(*v),

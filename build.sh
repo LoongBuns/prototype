@@ -36,5 +36,7 @@ else
 fi
 
 if $FLASH; then
-    web-flash --chip $EMBEDDED_MODEL program/target/$EMBEDDED_TARGET/$BUILD_MODE/program
+    web-flash --chip $EMBEDDED_MODEL program/target/$EMBEDDED_TARGET/$BUILD_MODE/program &
+    (cd server && cargo run) &
+    wait
 fi
