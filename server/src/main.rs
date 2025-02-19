@@ -1,19 +1,32 @@
 mod loader;
-mod task;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use loader::get_wasm_modules;
 use protocol::{Config, Message, Type};
-use task::{Task, TaskStatus};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
+#[derive(Debug, Clone)]
+pub enum TaskStatus {
+    Queued,
+    Dispatched,
+    Completed,
+    Failed,
+}
+
+pub struct Task {
+    pub wasm_binary: Vec<u8>,
+    pub params: Vec<Type>,
+    pub status: TaskStatus,
+}
+
 #[derive(Clone)]
 struct ServerState {
-    task_queue: Arc<Mutex<Vec<Task>>>,
+    task_queue: Arc<Mutex<VecDeque<Task>>>,
     pending_tasks: Arc<Mutex<HashMap<u64, Task>>>,
     next_task_id: Arc<AtomicU64>,
 }
@@ -21,19 +34,46 @@ struct ServerState {
 impl ServerState {
     fn new() -> Self {
         Self {
-            task_queue: Arc::new(Mutex::new(Vec::new())),
+            task_queue: Arc::new(Mutex::new(VecDeque::new())),
             pending_tasks: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
-    async fn add_task(&self, task: Task) {
+    async fn generate(&self) {
         let mut queue = self.task_queue.lock().await;
-        queue.push(task);
+        let modules = get_wasm_modules();
+
+        for module in modules.iter() {
+            match module.name {
+                "render" => {
+                    const HEIGHT: i32 = 300;
+                    const CHUNK_SIZE: i32 = 100;
+
+                    for start_row in (0..HEIGHT).step_by(CHUNK_SIZE as usize) {
+                        let end_row = (start_row + CHUNK_SIZE).min(HEIGHT);
+
+                        queue.push_back(Task {
+                            wasm_binary: module.data.to_vec(),
+                            params: vec![Type::I32(start_row), Type::I32(end_row)],
+                            status: TaskStatus::Queued,
+                        });
+                    }
+                }
+                "fiber" => {
+                    queue.push_back(Task {
+                        wasm_binary: module.data.to_vec(),
+                        params: vec![],
+                        status: TaskStatus::Queued,
+                    });
+                }
+                _ => {}
+            }
+        }
     }
 }
 
-async fn handle_request(mut socket: TcpStream, state: Arc<ServerState>) {
+async fn handle_connection(mut socket: TcpStream, state: Arc<ServerState>) {
     let mut buf = [0u8; 1024];
 
     loop {
@@ -46,7 +86,7 @@ async fn handle_request(mut socket: TcpStream, state: Arc<ServerState>) {
             Ok(Message::ClientReady) => {
                 let task = {
                     let mut queue = state.task_queue.lock().await;
-                    queue.pop()
+                    queue.pop_front()
                 };
 
                 if let Some(mut task) = task {
@@ -82,7 +122,7 @@ async fn handle_request(mut socket: TcpStream, state: Arc<ServerState>) {
     }
 }
 
-async fn process_result(state: Arc<ServerState>, task_id: u64, result: &Vec<Type>) {
+async fn process_result(state: Arc<ServerState>, task_id: u64, result: &[Type]) {
     let mut pending_tasks = state.pending_tasks.lock().await;
     if let Some(mut task) = pending_tasks.remove(&task_id) {
         task.status = if !result.is_empty() {
@@ -100,12 +140,11 @@ async fn main() {
 
     let listener = TcpListener::bind(&addr).await.unwrap();
     let state = Arc::new(ServerState::new());
+    state.generate().await;
 
     loop {
-        let (socket, _) = listener.accept().await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
         let state_clone = state.clone();
-        tokio::spawn(async move {
-            handle_request(socket, state_clone).await;
-        });
+        tokio::spawn(handle_connection(stream, state_clone));
     }
 }

@@ -8,6 +8,8 @@ fn main() {
     let task_dir = current_dir.join("../task");
     let dist_dir = task_dir.join("dist");
 
+    println!("cargo:rerun-if-changed={}", dist_dir.display());
+
     let output_install = Command::new("npm")
         .current_dir(task_dir.to_str().unwrap())
         .arg("install")
@@ -64,6 +66,4 @@ fn main() {
 
     let mut file = fs::File::create(&dest_path).unwrap();
     file.write_all(generated_code.as_bytes()).unwrap();
-
-    println!("cargo:rerun-if-changed={}", dist_dir.display());
 }

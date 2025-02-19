@@ -3,7 +3,7 @@ use std::net::TcpStream;
 
 use protocol::{Message, Type};
 use wamr_rust_sdk::{
-    function::Function, instance::Instance, module::Module, runtime::Runtime, value::WasmValue
+    function::Function, instance::Instance, module::Module, runtime::Runtime, value::WasmValue,
 };
 
 use crate::Error;
@@ -38,7 +38,7 @@ fn execute_wasm(binary: Vec<u8>, params: Vec<Type>) -> Result<Vec<Type>, Error> 
     Ok(result)
 }
 
-fn handle_response(mut socket: TcpStream) -> Result<(), Error> {
+fn handle_connection(mut socket: TcpStream) -> Result<(), Error> {
     socket.write_all(&Message::ClientReady.serialize())?;
     let mut buf = [0u8; 1024];
 
@@ -49,10 +49,7 @@ fn handle_response(mut socket: TcpStream) -> Result<(), Error> {
             Ok(Message::ServerTask { task_id, binary, params }) => {
                 let result = execute_wasm(binary, params)?;
                 
-                let msg = Message::ClientResult {
-                    task_id,
-                    result,
-                };
+                let msg = Message::ClientResult { task_id, result };
                 socket.write_all(&msg.serialize())?;
             }
             Ok(Message::ServerAck { .. }) => {
@@ -68,7 +65,7 @@ pub fn setup_container(host: &str, port: u16) -> Result<(), Error> {
 
     let stream = TcpStream::connect(&addr)?;
 
-    handle_response(stream)?;
+    handle_connection(stream)?;
 
     Ok(())
 }

@@ -4,8 +4,8 @@ use std::io;
 
 use container::setup_container;
 use esp_idf_svc::{eventloop, hal, log as esp_log, nvs, sys, wifi};
-use log::{info, error};
-use protocol::{Config, Wifi, Error as ProtocolError};
+use log::{error, info};
+use protocol::{Config, Error as ProtocolError, Wifi};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
