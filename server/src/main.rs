@@ -1,11 +1,12 @@
 mod loader;
 
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use loader::get_wasm_modules;
-use protocol::{Config, Message, Type};
+use loader::{get_wasm_modules, WasmModule};
+use protocol::{Config, Message, ModuleMeta, Type};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -19,9 +20,32 @@ pub enum TaskStatus {
 }
 
 pub struct Task {
+    pub module_meta: ModuleMeta,
     pub wasm_binary: Vec<u8>,
     pub params: Vec<Type>,
     pub status: TaskStatus,
+}
+
+impl Task {
+    const CHUNK_SIZE: usize = 1024;
+
+    pub fn new(module: &WasmModule, params: &[Type]) -> Self {
+        let total_chunks = (module.data.len() + Self::CHUNK_SIZE - 1) / Self::CHUNK_SIZE;
+
+        let module_meta = ModuleMeta {
+            name: module.name.to_string(),
+            size: module.data.len() as u64,
+            chunk_size: Self::CHUNK_SIZE as u32,
+            total_chunks: total_chunks as u32,
+        };
+
+        Self {
+            module_meta,
+            wasm_binary: module.data.to_vec(),
+            params: params.to_vec(),
+            status: TaskStatus::Queued,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -53,19 +77,13 @@ impl ServerState {
                     for start_row in (0..HEIGHT).step_by(CHUNK_SIZE as usize) {
                         let end_row = (start_row + CHUNK_SIZE).min(HEIGHT);
 
-                        queue.push_back(Task {
-                            wasm_binary: module.data.to_vec(),
-                            params: vec![Type::I32(start_row), Type::I32(end_row)],
-                            status: TaskStatus::Queued,
-                        });
+                        let task = Task::new(&module, &[Type::I32(start_row), Type::I32(end_row)]);
+                        queue.push_back(task);
                     }
                 }
                 "fiber" => {
-                    queue.push_back(Task {
-                        wasm_binary: module.data.to_vec(),
-                        params: vec![],
-                        status: TaskStatus::Queued,
-                    });
+                    let task = Task::new(&module, &[]);
+                    queue.push_back(task);
                 }
                 _ => {}
             }
@@ -73,17 +91,17 @@ impl ServerState {
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, state: Arc<ServerState>) {
+async fn handle_connection(mut socket: TcpStream, state: Arc<ServerState>) -> Result<(), Box<dyn Error>> {
     let mut buf = [0u8; 1024];
 
     loop {
-        let n = socket.read(&mut buf).await.unwrap();
+        let n = socket.read(&mut buf).await?;
         if n == 0 {
             break;
         }
 
-        match Message::deserialize(&buf[..n]) {
-            Ok(Message::ClientReady) => {
+        match Message::decode(&buf[..n])? {
+            Message::Heartbeat { timestamp } => {
                 let task = {
                     let mut queue = state.task_queue.lock().await;
                     queue.pop_front()
@@ -96,16 +114,25 @@ async fn handle_connection(mut socket: TcpStream, state: Arc<ServerState>) {
 
                     let msg = Message::ServerTask {
                         task_id,
-                        binary: task.wasm_binary.clone(),
+                        module: task.module_meta,
                         params: task.params.clone(),
                     };
+                    socket.write_all(&msg.encode()?).await?;
 
-                    socket.write_all(&msg.serialize()).await.unwrap();
+                    let chunks = task.wasm_binary.chunks(task.module_meta.chunk_size as usize);
+                    for (index, chunk) in chunks.enumerate() {
+                        let chunk_msg = Message::ServerModuleChunk {
+                            task_id,
+                            chunk_index: index as u32,
+                            chunk_data: chunk.to_vec(),
+                        };
+                        socket.write_all(&chunk_msg.encode()?).await?;
+                    }
 
                     state.pending_tasks.lock().await.insert(task_id, task);
                 }
             }
-            Ok(Message::ClientResult { task_id, result }) => {
+            Message::ClientResult { task_id, result } => {
                 let state_clone = state.clone();
                 process_result(state_clone, task_id, &result).await;
 
@@ -113,13 +140,15 @@ async fn handle_connection(mut socket: TcpStream, state: Arc<ServerState>) {
                     task_id,
                     success: true,
                 };
-                socket.write_all(&ack.serialize()).await.unwrap();
+                socket.write_all(&ack.encode()?).await?;
 
                 state.pending_tasks.lock().await.remove(&task_id);
             }
             _ => {}
         }
     }
+
+    Ok(())
 }
 
 async fn process_result(state: Arc<ServerState>, task_id: u64, result: &[Type]) {

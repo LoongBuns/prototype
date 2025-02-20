@@ -32,10 +32,6 @@ impl Config {
                 password: Arc::from(password),
             });
 
-        Self {
-            host,
-            port,
-            wifi,
-        }
+        Self { host, port, wifi }
     }
 }
