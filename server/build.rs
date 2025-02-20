@@ -15,7 +15,7 @@ fn main() {
         .arg("install")
         .output()
         .unwrap();
-    
+
     if !output_install.status.success() {
         panic!("npm install fail");
     }

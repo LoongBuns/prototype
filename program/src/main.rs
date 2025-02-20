@@ -75,14 +75,12 @@ fn main() {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
         let params: Vec<Type> = vec![Type::I32(10), Type::I32(20)];
-        
+
         match execute_wasm(binary, params) {
-            Ok(result) => {
-                match result.first() {
-                    Some(value) => info!("10 + 20 = {:?}", value),
-                    None => error!("Wasm runtime execute fail with void result"),
-                }
-            }
+            Ok(result) => match result.first() {
+                Some(value) => info!("10 + 20 = {:?}", value),
+                None => error!("Wasm runtime execute fail with void result"),
+            },
             Err(err) => error!("Wasm runtime crashed: {err}"),
         }
     }
