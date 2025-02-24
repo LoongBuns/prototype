@@ -50,10 +50,15 @@ pub enum Message {
         module: ModuleMeta,
         params: Vec<Type>,
     },
-    ServerModuleChunk {
+    ServerModule {
         task_id: u64,
         chunk_index: u32,
         chunk_data: Vec<u8>,
+    },
+    ClientAck {
+        task_id: u64,
+        chunk_index: Option<u32>,
+        success: bool,
     },
     ClientResult {
         task_id: u64,
@@ -72,8 +77,10 @@ impl Message {
     const HEADER_SIZE: usize = 2;
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
-        let payload = bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(Error::EncodeError)?;
+        let config = bincode::config::standard()
+            .with_variable_int_encoding()
+            .with_big_endian();
+        let payload = bincode::encode_to_vec(self, config).map_err(Error::EncodeError)?;
         let payload_len = payload.len();
 
         if payload_len > u16::MAX as usize {
@@ -87,22 +94,31 @@ impl Message {
         Ok(output)
     }
 
-    pub fn decode(data: &[u8]) -> Result<Self, Error> {
+    pub fn decode(data: &[u8]) -> Result<(Self, usize), Error> {
         if data.len() < Self::HEADER_SIZE {
             return Err(Error::InsufficientData);
         }
 
         let payload_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+        let total_len = Self::HEADER_SIZE + payload_len;
+
+        if data.len() < total_len {
+            return Err(Error::InsufficientData);
+        }
+
+        let config = bincode::config::standard()
+            .with_variable_int_encoding()
+            .with_big_endian();
 
         let (message, size) =
-            bincode::decode_from_slice(&data[Self::HEADER_SIZE..], bincode::config::standard())
+            bincode::decode_from_slice(&data[Self::HEADER_SIZE..total_len], config)
                 .map_err(Error::DecodeError)?;
 
         if size != payload_len {
             return Err(Error::InvalidMessage);
         }
 
-        Ok(message)
+        Ok((message, total_len))
     }
 }
 
@@ -114,16 +130,19 @@ mod tests {
 
     #[test]
     fn test_client_ready() {
-        let msg = Message::Heartbeat { timestamp: 0 };
+        let msg = Message::ClientReady {
+            module_name: None,
+            device_ram: 0,
+        };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(msg, decoded);
+        assert_eq!(msg, decoded.0);
     }
 
     #[test]
     fn test_server_task() {
         let msg = Message::ServerTask {
-            task_id: 42,
+            task_id: 99,
             module: ModuleMeta {
                 name: "test".into(),
                 size: 1024,
@@ -141,19 +160,31 @@ mod tests {
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(msg, decoded);
+        assert_eq!(msg, decoded.0);
     }
 
     #[test]
-    fn test_server_module_chunk() {
-        let msg = Message::ServerModuleChunk {
+    fn test_server_module() {
+        let msg = Message::ServerModule {
             task_id: 99,
             chunk_index: 1,
             chunk_data: vec![10, 20, 30, 40, 50],
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(msg, decoded);
+        assert_eq!(msg, decoded.0);
+    }
+
+    #[test]
+    fn test_client_ack() {
+        let msg_success = Message::ClientAck {
+            task_id: 99,
+            chunk_index: None,
+            success: true,
+        };
+        let encoded = msg_success.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(msg_success, decoded.0);
     }
 
     #[test]
@@ -164,14 +195,70 @@ mod tests {
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(msg, decoded);
+        assert_eq!(msg, decoded.0);
     }
 
     #[test]
     fn test_server_ack() {
-        let msg_success = Message::ServerAck { task_id: 1, success: true };
+        let msg_success = Message::ServerAck {
+            task_id: 1,
+            success: true,
+        };
         let encoded = msg_success.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(msg_success, decoded);
+        assert_eq!(msg_success, decoded.0);
+    }
+
+    #[test]
+    fn test_heartbeat() {
+        let msg = Message::Heartbeat {
+            timestamp: 1234567890,
+        };
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(msg, decoded.0);
+    }
+
+    #[test]
+    fn test_encode_invalid_message() {
+        let long_string = "a".repeat(u16::MAX as usize + 1);
+        let msg = Message::ClientReady {
+            module_name: Some(long_string),
+            device_ram: 0,
+        };
+        let result = msg.encode();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::InvalidMessage));
+    }
+
+    #[test]
+    fn test_decode_insufficient_data_header() {
+        let data = vec![1];
+        let result = Message::decode(&data);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::InsufficientData));
+    }
+
+    #[test]
+    fn test_decode_insufficient_data_payload() {
+        let data = vec![0, 5, 1, 2, 3];
+        let result = Message::decode(&data);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::InsufficientData));
+    }
+
+    #[test]
+    fn test_decode_decode_error() {
+        let msg = Message::ClientReady {
+            module_name: None,
+            device_ram: 0,
+        };
+        let mut encoded = msg.encode().unwrap();
+        if encoded.len() > 2 {
+            encoded[2] = encoded[2].wrapping_add(1);
+        }
+        let result = Message::decode(&encoded);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::DecodeError(_)));
     }
 }
