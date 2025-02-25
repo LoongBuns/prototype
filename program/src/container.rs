@@ -9,21 +9,79 @@ use wamr_rust_sdk::{
 use crate::Error;
 
 enum ModuleState {
-    Starting,
+    Idle,
     Loading {
         module_name: String,
         module_chunks: Vec<Vec<u8>>,
         module_params: Vec<Type>,
     },
-    Execute {
+    Executing {
         module_name: String,
         module_binary: Vec<u8>,
         module_params: Vec<Type>,
     },
-    Pending {
-        module_name: String,
-        module_binary: Vec<u8>,
-    },
+}
+
+fn process_message(
+    state: &mut ModuleState,
+    msg: &Message,
+    socket: &mut TcpStream,
+) -> Result<(), Error> {
+    match msg {
+        Message::ServerTask {
+            task_id,
+            module,
+            params
+        } => {
+
+        }
+        Message::ServerModule {
+            task_id,
+            chunk_index,
+            chunk_data,
+        } => match module_state {
+            ModuleState::Loading {
+                module_name,
+                mut module_chunks,
+                module_params,
+            } => {
+                if chunk_index < module_chunks.len() as u32 {
+                    module_chunks[chunk_index as usize] = chunk_data;
+                    if module_chunks.iter().all(|c| !c.is_empty()) {
+                        let binary: Vec<u8> = module_chunks.concat();
+                        let result = execute_wasm(binary, module_params.clone())?;
+                        let result_msg = Message::ClientResult { task_id, result };
+                        socket.write_all(&result_msg.encode()?)?;
+                        module_state = ModuleState::Execute {
+                            module_name,
+                            module_binary: binary,
+                            module_params,
+                        }
+                    }
+                }
+            }
+            _ => {}
+        },
+        Message::ServerAck { .. } => match module_state {
+            ModuleState::Execute {
+                module_name,
+                module_binary,
+                ..
+            } => {
+                let ready_message = Message::ClientReady {
+                    module_name: None,
+                    device_ram: 0,
+                };
+                socket.write_all(&ready_message.encode()?)?;
+                module_state = ModuleState::Pending {
+                    module_name,
+                    module_binary,
+                }
+            }
+            _ => {}
+        },
+        _ => {}
+    }
 }
 
 pub fn execute_wasm<T: Into<Vec<u8>>>(binary: T, params: Vec<Type>) -> Result<Vec<Type>, Error> {
@@ -70,7 +128,7 @@ fn handle_connection(mut socket: TcpStream) -> Result<(), Error> {
         module_name: None,
         device_ram: 0,
     };
-    socket.write_all(&ready_message.encode())?;
+    socket.write_all(&ready_message.encode()?)?;
 
     loop {
         let n = socket.read(&mut buf)?;
@@ -96,7 +154,7 @@ fn handle_connection(mut socket: TcpStream) -> Result<(), Error> {
                         let result = execute_wasm(module_binary, params.clone())?;
                         let result_msg = Message::ClientResult { task_id, result };
                         socket.write_all(&result_msg.encode()?)?;
-                        module_state = Module::Execute {
+                        module_state = ModuleState::Execute {
                             module_name,
                             module_binary,
                             module_params: params,
@@ -111,24 +169,24 @@ fn handle_connection(mut socket: TcpStream) -> Result<(), Error> {
                 }
                 _ => {}
             },
-            Message::ServerModuleChunk {
+            Message::ServerModule {
                 task_id,
                 chunk_index,
                 chunk_data,
             } => match module_state {
                 ModuleState::Loading {
                     module_name,
-                    module_chunks,
+                    mut module_chunks,
                     module_params,
                 } => {
-                    if chunk_index < module_chunks.len() {
+                    if chunk_index < module_chunks.len() as u32 {
                         module_chunks[chunk_index as usize] = chunk_data;
                         if module_chunks.iter().all(|c| !c.is_empty()) {
                             let binary: Vec<u8> = module_chunks.concat();
-                            let result = execute_wasm(binary, cache.params.clone())?;
+                            let result = execute_wasm(binary, module_params.clone())?;
                             let result_msg = Message::ClientResult { task_id, result };
                             socket.write_all(&result_msg.encode()?)?;
-                            module_state = Module::Execute {
+                            module_state = ModuleState::Execute {
                                 module_name,
                                 module_binary: binary,
                                 module_params,
@@ -148,8 +206,8 @@ fn handle_connection(mut socket: TcpStream) -> Result<(), Error> {
                         module_name: None,
                         device_ram: 0,
                     };
-                    socket.write_all(&ready_message.encode())?;
-                    module_state = Module::Pending {
+                    socket.write_all(&ready_message.encode()?)?;
+                    module_state = ModuleState::Pending {
                         module_name,
                         module_binary,
                     }

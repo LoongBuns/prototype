@@ -5,14 +5,17 @@ use protocol::Type;
 
 use hecs::Entity;
 
+#[derive(Debug, Clone)]
+pub struct TaskTransfer {
+    pub acked_chunks: BitVec,
+    pub assigned_device: Option<Entity>,
+    pub retries: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskPhase {
     Queued,
-    Distributing {
-        acked_chunks: BitVec,
-        assigned_device: Option<Entity>,
-        retries: u8,
-    },
+    Distributing,
     Executing,
     Completed,
     Failed,

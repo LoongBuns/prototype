@@ -32,7 +32,7 @@ fn main() {
     }
 
     let mut generated_code = String::new();
-    generated_code.push_str("static WASM_MODULES: &'static [WasmModule] = &[\n");
+    generated_code.push_str("static STATIC_MODULES: &'static [StaticModule] = &[\n");
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("generate.rs");
@@ -40,13 +40,18 @@ fn main() {
     for entry in dist_dir.read_dir().unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
 
-        if path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase() == "wasm" {
+        if ext == "wasm" {
             let module_name = path.file_stem().unwrap().to_string_lossy();
             let wasm_bytes = fs::read(&path).unwrap();
 
             generated_code.push_str(&format!(
-                "    WasmModule {{ name: \"{}\", data: &[ \n",
+                "    StaticModule {{ name: \"{}\", binary: &[ \n",
                 module_name
             ));
 
