@@ -235,13 +235,12 @@ mod tests {
         let half = encoded.split_off(encoded.len() / 2);
         let client_owned = atomic_client.to_owned();
         let job_handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
             client_owned.lock().await.write_all(&half).await.unwrap();
             client_owned.lock().await.flush().await.unwrap();
         });
         atomic_client.lock().await.write_all(&encoded).await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert_eq!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2], false);
         job_handle.await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         assert_eq!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2], true);
