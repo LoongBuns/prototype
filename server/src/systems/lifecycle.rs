@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use bytes::BytesMut;
 use hecs::World;
 use protocol::Message;
 use tokio::net::TcpListener;
@@ -21,12 +22,13 @@ impl LifecycleSystem {
                 Session {
                     device_addr: addr,
                     device_ram: 0,
-                    read_buffer: VecDeque::new(),
-                    write_buffer: VecDeque::new(),
+                    message_queue: VecDeque::new(),
                     latency: Duration::default(),
                 },
                 SessionStream {
                     inner: Arc::new(Mutex::new(stream)),
+                    incoming: BytesMut::new(),
+                    outgoing: BytesMut::new(),
                 },
                 SessionHealth {
                     retries: 0,

@@ -19,4 +19,4 @@ To use this script:
 
 - Docker start failed with mount error on Windows?
 
-  Remove the run args `--mount type=bind,source=/run/udev,target=/run/udev,readonly` in `devcontainer.json`
+  Remove the run args `--mount type=bind,source=/run/udev,target=/run/udev,readonly` in `devcontainer.json`.
