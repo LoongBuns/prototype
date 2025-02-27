@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Buf;
 use hecs::{Entity, World};
+use log::{debug, error, info};
 use protocol::Message;
 use tokio::io::*;
 
@@ -18,7 +19,7 @@ impl NetworkSystem {
         let mut task_transfer = HashMap::new();
         let mut task_result = HashMap::new();
 
-        for (_, (session, stream, health)) in world
+        for (entity, (session, stream, health)) in world
             .query::<(&mut Session, &mut SessionStream<T>, &mut SessionHealth)>()
             .iter()
         {
@@ -29,10 +30,12 @@ impl NetworkSystem {
 
             match locked_stream.read_buf(&mut stream.incoming).await {
                 Ok(0) => {
+                    info!("Session {:?} closed connection gracefully", entity);
                     health.status = SessionStatus::Disconnected;
                     continue;
                 }
-                Err(_) => {
+                Err(e) => {
+                    error!("Session {:?} read buf error: {}", entity, e);
                     health.status = SessionStatus::Disconnected;
                     continue;
                 }
@@ -48,10 +51,12 @@ impl NetworkSystem {
                         let last_record = UNIX_EPOCH + Duration::from_nanos(timestamp);
                         let latency = now.duration_since(last_record).unwrap();
                         session.latency = latency;
+                        debug!("Session {:?} heartbeat, latency {} ms", entity, latency.as_millis());
                     }
                     Message::ClientReady { device_ram, .. } => {
                         if health.status == SessionStatus::Connected {
                             session.device_ram = device_ram;
+                            info!("Session {:?} client ready, device ram {}", entity, device_ram);
                         }
                     }
                     Message::ClientAck { task_id, chunk_index, success } => {
@@ -64,6 +69,7 @@ impl NetworkSystem {
                     Message::ClientResult { task_id, result } => {
                         if health.status == SessionStatus::Occupied {
                             if let Some(task) = Entity::from_bits(task_id) {
+                                info!("Task {:?} completed by session {:?}", task, entity);
                                 task_result.insert(task, result.clone());
                             }
                         }
@@ -95,7 +101,7 @@ impl NetworkSystem {
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        for (_, (session, stream, health)) in world
+        for (entity, (session, stream, health)) in world
             .query::<(&mut Session, &mut SessionStream<T>, &mut SessionHealth)>()
             .iter()
         {
@@ -110,9 +116,11 @@ impl NetworkSystem {
                 }
             }
 
-            if let Err(_) = locked_stream.write_all(&stream.outgoing).await {
+            if let Err(e) = locked_stream.write_all(&stream.outgoing).await {
+                error!("Failed to send data to session {:?}: {}", entity, e);
                 health.retries += 1;
             } else {
+                debug!("Sent {} bytes to session {:?}", stream.outgoing.len(), entity);
                 stream.outgoing.clear();
                 health.retries = 0;
             }

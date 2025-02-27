@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::BytesMut;
 use hecs::World;
+use log::{info, warn};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
@@ -16,7 +17,8 @@ impl LifecycleSystem {
     const TIMEOUT: Duration = Duration::from_secs(30);
 
     pub async fn accept_connection(world: &mut World, listener: &TcpListener) {
-        while let Ok((stream, addr)) = listener.accept().await {
+        if let Ok((stream, addr)) = listener.accept().await {
+            info!("Accepted connection from {}", addr);
             world.spawn((
                 Session {
                     device_addr: addr,
@@ -50,39 +52,41 @@ impl LifecycleSystem {
 
             match health.status {
                 SessionStatus::Connected if elapsed > Self::TIMEOUT => {
+                    warn!("Session {:?} timed out ({} secs), marked as zombie", entity, elapsed.as_secs());
                     health.status = SessionStatus::Zombie;
                     health.retries = 0;
                 }
                 SessionStatus::Zombie => {
                     health.retries += 1;
                     if health.retries >= Self::MAX_RETRIES {
+                        info!("Session {:?} reached max retries, scheduled for removal", entity);
                         dead_sessions.push(entity);
                     }
                 }
                 SessionStatus::Disconnected => {
+                    info!("Session {:?} disconnected, attempting reconnect", entity);
                     pending_reconnects.push((entity, session.device_addr));
                 }
                 _ => {}
             }
         }
 
-        let mut reconnected = Vec::new();
         for (entity, addr) in pending_reconnects {
             if let Ok(stream) = TcpStream::connect(addr).await {
-                reconnected.push((entity, stream));
+                info!("Session {:?} reconnected to {} successfully", entity, addr);
+                if let Ok((session, health)) = world
+                    .query_one_mut::<(&mut SessionStream<TcpStream>, &mut SessionHealth)>(entity)
+                {
+                    session.inner = Arc::new(Mutex::new(stream));
+                    health.status = SessionStatus::Connected;
+                    health.last_heartbeat = SystemTime::now();
+                }
             }
         }
 
         for entity in dead_sessions {
+            info!("Removing dead session {:?}", entity);
             world.despawn(entity).ok();
-        }
-
-        for (entity, stream) in reconnected {
-            if let Ok((session, health)) = world.query_one_mut::<(&mut SessionStream<TcpStream>, &mut SessionHealth)>(entity) {
-                session.inner = Arc::new(Mutex::new(stream));
-                health.status = SessionStatus::Connected;
-                health.last_heartbeat = SystemTime::now();
-            }
         }
     }
 }

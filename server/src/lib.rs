@@ -3,11 +3,12 @@ mod module;
 mod systems;
 
 use hecs::World;
+use log::info;
 use tokio::net::{TcpListener, TcpStream};
 
 pub async fn run(host: &str, port: u16) {
     let addr = format!("{}:{}", host, port);
-    println!("Server listening on {}", addr);
+    info!("Server listening on {}", addr);
 
     let listener = TcpListener::bind(&addr).await.unwrap();
     let mut world = World::new();

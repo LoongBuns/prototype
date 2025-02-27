@@ -7,7 +7,7 @@
         "build": "node bin/build"
     },
     "dependencies": {
-        "@use-gpu/live": "^0.12"
+        "@use-gpu/live": "^0.13"
     },
     "devDependencies": {
         "rollup": "^4",

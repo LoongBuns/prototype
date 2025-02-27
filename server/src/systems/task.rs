@@ -3,6 +3,7 @@ use std::collections::BinaryHeap;
 
 use bitvec::vec::BitVec;
 use hecs::World;
+use log::{debug, info};
 use protocol::{Message, ModuleMeta};
 
 use crate::components::*;
@@ -47,7 +48,7 @@ impl TaskSystem {
                         .query_one_mut::<(&Task, &mut TaskState)>(task_entity)
                         .unwrap();
                     state.phase = TaskPhase::Distributing;
-
+                    info!("Task {:?} assigned to device {:?}", task_entity, device_entity);
                     (
                         ModuleMeta {
                             name: task.module_name.clone(),
@@ -108,12 +109,14 @@ impl TaskSystem {
         for (task_entity, device_entity, messages) in distributing_tasks {
             if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
                 session.message_queue.extend(messages);
+                debug!("Task {:?} send {} chunks to device {:?}", task_entity, session.message_queue.len(), device_entity);
             }
 
             let finish = world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks.all();
             if finish {
                 if let Ok(mut state) = world.get::<&mut TaskState>(task_entity) {
                     state.phase = TaskPhase::Executing;
+                    info!("Task {:?} all chunks acknowledged, moving to executing phase", task_entity);
                 }
 
                 world.remove_one::<TaskTransfer>(task_entity).ok();

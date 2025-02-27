@@ -5,5 +5,7 @@ use server::run;
 async fn main() {
     let Config { host, port, .. } = Config::new();
 
+    env_logger::init();
+
     run(&host, port).await;
 }
