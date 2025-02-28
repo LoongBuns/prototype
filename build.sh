@@ -1,9 +1,5 @@
 #!/bin/bash
 
-which idf.py >/dev/null || {
-    source ~/export-esp.sh >/dev/null 2>&1
-}
-
 BUILD_MODE=debug
 FLASH=false
 
@@ -28,15 +24,23 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$BUILD_MODE" = "release" ]; then
-    cd program && cargo +esp build --release --target $EMBEDDED_TARGET && cd ..
-    cd server && cargo +stable build --release && cd ..
+    cargo +stable --release --package server
 else
-    cd program && cargo +esp build --target $EMBEDDED_TARGET && cd ..
-    cd server && cargo +stable build && cd ..
+    cargo +stable --package server
 fi
 
+(
+    which idf.py >/dev/null || { source ~/export-esp.sh >/dev/null 2>&1 }
+
+    if [ "$BUILD_MODE" = "release" ]; then
+        cd adapter/esp && cargo +esp build --release --target $EMBEDDED_TARGET && cd ../..
+    else
+        cd adapter/esp && cargo +esp build --target $EMBEDDED_TARGET && cd ../..
+    fi
+)
+
 if $FLASH; then
-    web-flash --chip $EMBEDDED_MODEL program/target/$EMBEDDED_TARGET/$BUILD_MODE/program &
-    (cd server && cargo run) &
+    web-flash --chip $EMBEDDED_MODEL adapter/esp/target/$EMBEDDED_TARGET/$BUILD_MODE/program &
+    (cargo +stable run --package server) &
     wait
 fi
