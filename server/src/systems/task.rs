@@ -14,6 +14,7 @@ impl TaskSystem {
     pub fn assign_tasks(world: &mut World) {
         let mut queued_tasks = world
             .query::<(&Task, &TaskState)>()
+            .without::<&TaskTransfer>()
             .iter()
             .filter_map(|(entity, (task, state))| {
                 (state.phase == TaskPhase::Queued)
@@ -71,7 +72,7 @@ impl TaskSystem {
                     )
                     .unwrap();
 
-                if let Ok(session) = world.query_one_mut::<&mut Session>(device_entity) {
+                if let Ok(session) = world.get::<&mut Session>(device_entity) {
                     session.message_queue.push_back(Message::ServerTask {
                         task_id: task_entity.to_bits().into(),
                         module,
@@ -107,11 +108,6 @@ impl TaskSystem {
             .collect::<Vec<_>>();
 
         for (task_entity, device_entity, messages) in distributing_tasks {
-            if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
-                session.message_queue.extend(messages);
-                debug!("Task {:?} send {} chunks to device {:?}", task_entity, session.message_queue.len(), device_entity);
-            }
-
             let finish = world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks.all();
             if finish {
                 if let Ok(mut state) = world.get::<&mut TaskState>(task_entity) {
@@ -120,6 +116,11 @@ impl TaskSystem {
                 }
 
                 world.remove_one::<TaskTransfer>(task_entity).ok();
+            } else {
+                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                    session.message_queue.extend(messages);
+                    debug!("Task {:?} send {} chunks to device {:?}", task_entity, session.message_queue.len(), device_entity);
+                }
             }
         }
     }

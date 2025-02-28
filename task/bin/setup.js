@@ -2,9 +2,22 @@ import { pipeline } from "node:stream/promises";
 import zlib from "node:zlib";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
-const DOWNLOAD_URL = "https://github.com/bytecodealliance/javy/releases/download/v5.0.1/javy-x86_64-linux-v5.0.1.gz";
-const JAVY_BIN = path.join(import.meta.dirname, "../node_modules/.bin", "javy");
+const VERSION = "v5.0.1";
+const PACKAGE = {
+    "darwin": {
+        "x64": `javy-x86_64-macos-${VERSION}.gz`,
+        "arm": `javy-arm-macos-${VERSION}.gz`
+    },
+    "linux": {
+        "x64": `javy-x86_64-linux-${VERSION}.gz`,
+        "arm": `javy-arm-linux-${VERSION}.gz`
+    },
+    "win32": `javy-x86_64-windows-${VERSION}.gz`
+};
+const DOWNLOAD_URL = `https://github.com/bytecodealliance/javy/releases/download/${VERSION}`;
+const JAVY_BIN = path.join(import.meta.dirname, "../node_modules/.bin", os.platform() === "win32" ? "javy.exe" : "javy");
 const TEMP = path.join(import.meta.dirname, "javy.gz");
 
 if (fs.existsSync(JAVY_BIN)) {
@@ -13,7 +26,15 @@ if (fs.existsSync(JAVY_BIN)) {
 
 async function downloadJavy() {
     try {
-        const response = await fetch(DOWNLOAD_URL);
+        let platform = os.platform();
+        if (platform !== "win32" && platform !== "darwin")
+            platform = "linux";
+
+        let arch = os.arch();
+        arch = (arch === "arm" || arch === "arm64") ? "arm" : "x64";
+
+        const url = `${DOWNLOAD_URL}/${PACKAGE[platform]?.[arch] || PACKAGE[platform] || ""}`;
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
         }

@@ -1,0 +1,7 @@
+[workspace]
+members = ["protocol", "server"]
+exclude = ["program"]
+resolver = "2"
+
+[workspace.dependencies]
+protocol = { path = "protocol" }

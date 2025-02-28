@@ -26,6 +26,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
 
 # Update envs
 ENV PATH=${PATH}:/home/${CONTAINER_USER}/.cargo/bin
+ENV LLVM_LIB_CFG_PATH="/usr/lib/llvm-14/cmake/"
 
 # Install extra crates
 RUN ARCH=$($HOME/.cargo/bin/rustup show | grep "Default host" | sed -e 's/.* //') && \
@@ -54,8 +55,5 @@ RUN if [ -n "${GITHUB_TOKEN}" ]; then export GITHUB_TOKEN=${GITHUB_TOKEN}; fi \
     --targets "${ESP_BOARD}" \
     --log-level debug \
     --export-file /home/${CONTAINER_USER}/export-esp.sh
-
-# Activate ESP environment
-RUN echo "source /home/${CONTAINER_USER}/export-esp.sh" >> ~/.bashrc
 
 CMD [ "/bin/bash" ]

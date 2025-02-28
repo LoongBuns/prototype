@@ -5,27 +5,43 @@ use std::process::Command;
 
 fn main() {
     let current_dir = std::env::current_dir().unwrap();
-    let task_dir = current_dir.join("../task");
+    let workspace_dir = current_dir.parent().unwrap();
+    let task_dir = workspace_dir.join("task");
     let dist_dir = task_dir.join("dist");
 
     println!("cargo:rerun-if-changed={}", dist_dir.display());
 
-    let output_install = Command::new("npm")
-        .current_dir(task_dir.to_str().unwrap())
-        .arg("install")
-        .output()
-        .unwrap();
+    let output_install = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .current_dir(task_dir.to_str().unwrap())
+            .args(["/C", "npm install"])
+            .output()
+            .unwrap()
+    } else {
+        Command::new("sh")
+            .current_dir(task_dir.to_str().unwrap())
+            .args(["-c", "npm install"])
+            .output()
+            .unwrap()
+    };
 
     if !output_install.status.success() {
         panic!("npm install fail");
     }
 
-    let output_build = Command::new("npm")
-        .current_dir(task_dir.to_str().unwrap())
-        .arg("run")
-        .arg("build")
-        .output()
-        .unwrap();
+    let output_build = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .current_dir(task_dir.to_str().unwrap())
+            .args(["/C", "npm run build"])
+            .output()
+            .unwrap()
+    } else {
+        Command::new("sh")
+            .current_dir(task_dir.to_str().unwrap())
+            .args(["-c", "npm run build"])
+            .output()
+            .unwrap()
+    };
 
     if !output_build.status.success() {
         panic!("npm run build fail");
