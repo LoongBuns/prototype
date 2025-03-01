@@ -1,0 +1,33 @@
+[package]
+name = "esp"
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+
+[[bin]]
+name = "program"
+harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
+[features]
+default = []
+experimental = ["esp-idf-svc/experimental"]
+
+[dependencies]
+esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+log = { version = "0.4", default-features = false }
+protocol = { path = "../protocol" }
+thiserror = { version = "2", default-features = false }
+wamr-rust-sdk = { git = "https://github.com/bytecodealliance/wamr-rust-sdk", features = ["esp-idf"] }
+
+[build-dependencies]
+embuild = "0.33"
+
+[profile.dev]
+opt-level = "z"
+debug = true
+
+[profile.release]
+opt-level = "s"
+debug = false

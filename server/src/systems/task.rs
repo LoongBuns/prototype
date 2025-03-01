@@ -72,7 +72,7 @@ impl TaskSystem {
                     )
                     .unwrap();
 
-                if let Ok(session) = world.get::<&mut Session>(device_entity) {
+                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
                     session.message_queue.push_back(Message::ServerTask {
                         task_id: task_entity.to_bits().into(),
                         module,
