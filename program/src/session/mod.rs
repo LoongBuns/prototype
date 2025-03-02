@@ -1,3 +1,4 @@
+mod cache;
 mod events;
 mod transfer;
 
@@ -7,13 +8,13 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use cache::ModuleCache;
 use bytes::{Buf, BytesMut};
 use events::{EventQueue, SessionEvent};
 use log::{error, info, warn};
 use protocol::{Message, Type};
 use transfer::ModuleTransfer;
 
-use crate::cache::LruCache;
 use crate::{Clock, Error, Executor, Transport};
 
 pub struct TaskMeta {
@@ -47,7 +48,7 @@ pub enum SessionState {
 }
 
 struct SharedState {
-    module_cache: LruCache,
+    module_cache: ModuleCache,
     active_tasks: BTreeMap<u64, TaskMeta>,
     incoming: BytesMut,
     outgoing: BytesMut,
@@ -73,7 +74,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
             executor,
             clock,
             shared: RefCell::new(SharedState {
-                module_cache: LruCache::new(Self::MAX_MODULE_CACHE_SIZE),
+                module_cache: ModuleCache::new(Self::MAX_MODULE_CACHE_SIZE),
                 active_tasks: BTreeMap::new(),
                 incoming: BytesMut::with_capacity(Self::MAX_BUFF_SIZE),
                 outgoing: BytesMut::with_capacity(Self::MAX_BUFF_SIZE),
@@ -90,6 +91,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
         loop {
             self.process_io();
             self.process_events();
+            self.process_state();
         }
     }
 
@@ -129,100 +131,113 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
     }
 
     fn process_events(&mut self) {
-        loop {
-            let result = self.events.borrow_mut().pop();
+        let events: Vec<SessionEvent> = self.events.borrow_mut().drain(..).collect();
 
-            if result.is_some() {
-                match result.unwrap() {
-                    SessionEvent::Message(message) => self.handle_message(message).unwrap(),
-                    SessionEvent::TaskTimeout(task_id) => {
-                        if let SessionState::Executing { task_id: id, .. } = self.state {
-                            if id == task_id {
-                                error!("Task {} timeout", task_id);
-                                self.state = SessionState::Failed;
-                            }
-                        }
-                    }
-                }
-
-                match &self.state {
-                    SessionState::Transferring { task_id, retries, .. } => {
-                        let mut shared = self.shared.borrow_mut();
-
-                        if *retries > 3 {
-                            error!("Transfer retries exceeded for task {}", task_id);
-                            // cannot assign to `self.state` because it is borrowed
-                            // `self.state` is assigned to here but it was already borrowedrustcClick for full compiler diagnostic
-                            // mod.rs(148, 23): `self.state` is borrowed here
-                            // mod.rs(155, 57): borrow later used here
-                            // self.state = SessionState::Failed;
-                            Self::send_ack(&mut shared, *task_id, None, false).unwrap();
-                        }
-                    }
-                    SessionState::Executing { task_id, deadline } => {
-                        if self.clock.timestamp() > *deadline {
-                            self.events.borrow_mut().push(SessionEvent::TaskTimeout(*task_id));
-                        }
-                    }
-                    _ => {}
-                }
-            } else {
+        for event in events {
+            if matches!(self.state, SessionState::Failed) {
                 break;
+            }
+            match event {
+                SessionEvent::Message(msg) => {
+                    if let Err(_) = self.handle_message(&msg) {
+                        self.state = SessionState::Failed;
+                        break;
+                    }
+                }
+                SessionEvent::TaskTimeout(task_id) => {
+                    if let SessionState::Executing { task_id: current_id, .. } = self.state {
+                        if current_id == task_id {
+                            self.state = SessionState::Failed;
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn handle_message(&mut self, msg: Message) -> Result<(), Error> {
+    fn process_state(&mut self) {
+        match &mut self.state {
+            SessionState::Transferring { task_id, retries, .. } => {
+                let mut shared = self.shared.borrow_mut();
+                if *retries > 3 {
+                    Self::send_ack(&mut shared, *task_id, None, false).unwrap();
+                    self.state = SessionState::Failed;
+                }
+            }
+            SessionState::Executing { task_id, deadline } => {
+                if self.clock.timestamp() > *deadline {
+                    self.events.borrow_mut().push(SessionEvent::TaskTimeout(*task_id));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_message(&mut self, msg: &Message) -> Result<(), Error> {
         match msg {
             Message::ServerTask { task_id, module, params } => {
                 let module_name = module.name.clone();
-
                 let mut shared = self.shared.borrow_mut();
+
                 if let Some(cached) = shared.module_cache.get(&module_name) {
-                    let result = self.executor.execute(cached.to_vec(), params)?;
-                    Self::send_result(&mut shared, task_id, result)?;
+                    let result = self.executor.execute(cached, params.to_owned())?;
+                    Self::send_result(&mut shared, *task_id, result)?;
                 } else {
-                    let transfer = ModuleTransfer::new(module);
-                    self.state = SessionState::Transferring { task_id, transfer, params, retries: 0 };
-                    Self::send_ack(&mut shared, task_id, None, true)?;
+                    shared.module_cache.put(&module_name, module.size as usize);
+
+                    if shared.module_cache.contains_key(&module_name) {
+                        let transfer = ModuleTransfer::new(module);
+                        Self::send_ack(&mut shared, *task_id, None, true)?;
+                        self.state = SessionState::Transferring {
+                            task_id: *task_id,
+                            transfer,
+                            params: params.to_owned(),
+                            retries: 0,
+                        };
+                    } else {
+                        self.state = SessionState::Failed;
+                    }
                 }
             }
             Message::ServerModule { task_id, chunk_index, chunk_data } => {
-                if let SessionState::Transferring { task_id: idx, transfer, params, retries } = &mut self.state {
-                    if *idx != task_id {
+                if let SessionState::Transferring { task_id: current_id, transfer, params, retries } = &mut self.state {
+                    if *current_id != *task_id {
                         return Err(Error::InvalidChunk);
                     }
 
-                    if let Err(e) = transfer.add_chunk(chunk_index, &chunk_data) {
-                        *retries += 1;
-                        return Err(e);
-                    }
-
                     let mut shared = self.shared.borrow_mut();
-                    Self::send_ack(&mut shared, task_id, Some(chunk_index), true)?;
+                    match transfer.add_chunk(&mut shared.module_cache, *chunk_index as usize, &chunk_data) {
+                        Ok(_) => {
+                            Self::send_ack(&mut shared, *task_id, Some(*chunk_index), true)?;
 
-                    if transfer.is_complete() {
-                        let module_data = transfer.binary()?.to_vec();
-                        shared
-                            .module_cache
-                            .put(transfer.name().to_string(), module_data.to_owned());
+                            if transfer.is_complete() {
+                                let module_name = transfer.name().to_string();
+                                let module_data = shared.module_cache.get(&module_name).ok_or(Error::CacheMiss)?;
 
-                        let result = self.executor.execute(module_data, params.clone())?;
-                        Self::send_result(&mut shared, task_id, result)?;
-                        self.state = SessionState::Completed;
+                                let result = self.executor.execute(module_data, params.clone())?;
+                                Self::send_result(&mut shared, *task_id, result)?;
+                                self.state = SessionState::Completed;
+                            }
+                        }
+                        Err(e) => {
+                            Self::send_ack(&mut shared, *task_id, Some(*chunk_index), false)?;
+                            *retries += 1;
+                            return Err(e);
+                        }
                     }
                 }
             }
             Message::ServerAck { task_id, success } => {
                 if let Some(_task) = self.shared.borrow_mut().active_tasks.remove(&task_id) {
-                    if success {
+                    if *success {
                         info!("Task {} completed successfully", task_id);
                     } else {
                         warn!("Task {} failed on server side", task_id);
                     }
                 }
             }
-            _ => {},
+            _ => {}
         }
         Ok(())
     }

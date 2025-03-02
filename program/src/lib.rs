@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate alloc;
 
-mod cache;
 mod session;
 
 use alloc::string::String;
@@ -27,6 +26,8 @@ pub enum Error {
     TaskNotFound,
     #[error("Incomplete write")]
     IncompleteWrite,
+    #[error("Cache missing")]
+    CacheMiss,
 }
 
 pub trait Clock {
@@ -34,7 +35,7 @@ pub trait Clock {
 }
 
 pub trait Executor {
-    fn execute(&self, module: Vec<u8>, params: Vec<Type>) -> Result<Vec<Type>, Error>;
+    fn execute(&self, module: &[u8], params: Vec<Type>) -> Result<Vec<Type>, Error>;
 }
 
 pub trait Transport {

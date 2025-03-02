@@ -1,8 +1,9 @@
 use alloc::collections::VecDeque;
+use core::ops::RangeBounds;
 
 use protocol::Message;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SessionEvent {
     Message(Message),
     TaskTimeout(u64),
@@ -25,5 +26,12 @@ impl EventQueue {
 
     pub fn pop(&mut self) -> Option<SessionEvent> {
         self.inner.pop_front()
+    }
+
+    pub fn drain<R>(&mut self, range: R) -> impl Iterator<Item = SessionEvent> + '_
+    where
+        R: RangeBounds<usize>,
+    {
+        self.inner.drain(range)
     }
 }
