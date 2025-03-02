@@ -17,6 +17,10 @@ To use this script:
 
 ### FAQ
 
-- Docker start failed with mount error on Windows?
+- Docker start failed with mount error?
 
-  Remove the run args `--mount type=bind,source=/run/udev,target=/run/udev,readonly` in `devcontainer.json`.
+  Remove or replace the run args `--mount type=bind,source=/run/udev,target=/run/udev,readonly` in `devcontainer.json`.
+
+- Out of memory when build or test?
+
+  Reduce the workers usage. Either `--jobs 1` or build single target `--package server --lib` will works.

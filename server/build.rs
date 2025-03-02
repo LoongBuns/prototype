@@ -7,9 +7,10 @@ fn main() {
     let current_dir = std::env::current_dir().unwrap();
     let workspace_dir = current_dir.parent().unwrap();
     let task_dir = workspace_dir.join("task");
+    let src_dir = task_dir.join("src");
     let dist_dir = task_dir.join("dist");
 
-    println!("cargo:rerun-if-changed={}", dist_dir.display());
+    println!("cargo:rerun-if-changed={}", src_dir.display());
 
     let output_install = if cfg!(target_os = "windows") {
         Command::new("cmd")
