@@ -8,10 +8,11 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub async fn run(host: &str, port: u16) {
     let addr = format!("{}:{}", host, port);
-    info!("Server listening on {}", addr);
 
     let listener = TcpListener::bind(&addr).await.unwrap();
     let mut world = World::new();
+
+    info!("Server listening on {:?}", listener.local_addr());
 
     loop {
         systems::LifecycleSystem::accept_connection(&mut world, &listener).await;

@@ -181,7 +181,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 let mut shared = self.shared.borrow_mut();
 
                 if let Some(cached) = shared.module_cache.get(&module_name) {
-                    let result = self.executor.execute(cached, params.to_owned())?;
+                    let result = self.executor
+                        .execute(cached, params.to_owned())
+                        .map_err(|e| Error::Execution(e.to_string()))?;
                     Self::send_result(&mut shared, *task_id, result)?;
                 } else {
                     shared.module_cache.put(&module_name, module.size as usize);
@@ -215,7 +217,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                                 let module_name = transfer.name().to_string();
                                 let module_data = shared.module_cache.get(&module_name).ok_or(Error::CacheMiss)?;
 
-                                let result = self.executor.execute(module_data, params.clone())?;
+                                let result = self.executor
+                                    .execute(module_data, params.clone())
+                                    .map_err(|e| Error::Execution(e.to_string()))?;
                                 Self::send_result(&mut shared, *task_id, result)?;
                                 self.state = SessionState::Completed;
                             }

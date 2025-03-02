@@ -1,6 +1,6 @@
 [workspace]
 members = ["program", "protocol", "server"]
-exclude = ["adapter/*"]
+exclude = ["adapter/"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,0 +1,14 @@
+[package]
+name = "std"
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2021"
+resolver = "2"
+
+[[bin]]
+name = "program"
+path = "src/main.rs"
+
+[dependencies]
+program = { path = "../../program" }
+wamr-rust-sdk = { git = "https://github.com/bytecodealliance/wamr-rust-sdk" }

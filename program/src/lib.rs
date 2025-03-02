@@ -8,8 +8,8 @@ mod session;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use bytes::{Buf, BufMut};
-use protocol::Type;
+pub use bytes::{Buf, BufMut};
+pub use protocol::{Config, Type};
 pub use session::Session;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,15 +35,19 @@ pub trait Clock {
 }
 
 pub trait Executor {
-    fn execute(&self, module: &[u8], params: Vec<Type>) -> Result<Vec<Type>, Error>;
+    type Error: core::error::Error;
+
+    fn execute(&self, module: &[u8], params: Vec<Type>) -> Result<Vec<Type>, Self::Error>;
 }
 
 pub trait Transport {
-    fn read<'a, B>(&mut self, buf: &'a mut B) -> Result<usize, Error>
+    type Error: core::error::Error;
+
+    fn read<'a, B>(&mut self, buf: &'a mut B) -> Result<usize, Self::Error>
     where
         B: BufMut + ?Sized;
 
-    fn write<'a, B>(&mut self, src: &'a mut B) -> Result<usize, Error>
+    fn write<'a, B>(&mut self, src: &'a mut B) -> Result<usize, Self::Error>
     where
         B: Buf;
 }
