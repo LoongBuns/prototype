@@ -5,7 +5,7 @@
         "args": {
             "CONTAINER_USER": "prototype",
             "CONTAINER_GROUP": "prototype",
-            "ESP_BOARD": "esp32s3"
+            "ESP_BOARD": "all"
         }
     },
     // https://github.com/serialport/serialport-rs/issues/153
@@ -30,8 +30,7 @@
                 "vadimcn.vscode-lldb",
                 "rust-lang.rust-analyzer",
                 "tamasfe.even-better-toml",
-                "ms-vscode.cpptools",
-                "Wokwi.wokwi-vscode"
+                "ms-vscode.cpptools"
             ]
         }
     },

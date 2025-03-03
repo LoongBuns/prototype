@@ -1,5 +1,0 @@
-[wokwi]
-version = 1
-gdbServerPort = 3333
-elf = "program/target/xtensa-esp32s3-espidf/debug/program"
-firmware = "program/target/xtensa-esp32s3-espidf/debug/program"
