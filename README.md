@@ -1,19 +1,20 @@
 # Prototype
 
-This is a prototype of wasm on esp.
+This is a prototype of wasm on embedded.
 
 ## Usage
 
 To use this script:
 
 ```sh
-./build.sh [--flash | -f] [release | debug]
+./build.sh [release | debug] [--flash | -f] [--model | -m <MODEL>]
 ```
 
 ### Parameters
 
 * release or debug: Specify the build mode (default: debug).
-* -f or --flash: Enable flashing of the built firmware to the ESP32-S3 device (optional).
+* -f or --flash: Enable flashing of the built firmware to the target device (optional).
+* -m or --model: Select an embedded model to build (optional).
 
 ### FAQ
 

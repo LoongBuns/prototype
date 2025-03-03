@@ -20,14 +20,18 @@ pub enum Error {
     Transport(String),
     #[error("Execution error: {0}")]
     Execution(String),
-    #[error("Invalid chunk")]
-    InvalidChunk,
-    #[error("Task not found")]
-    TaskNotFound,
-    #[error("Incomplete write")]
-    IncompleteWrite,
-    #[error("Cache missing")]
-    CacheMiss,
+    #[error("Invalid chunk index ({0} in range [0, {1}])")]
+    InvalidChunkIndex(usize, usize),
+    #[error("Duplicate chunk (index: {0})")]
+    DuplicateChunk(usize),
+    #[error("Invalid chunk size (expected {0}, got {1})")]
+    InvalidChunkSize(usize, usize),
+    #[error("Task not found: {0}")]
+    TaskNotFound(u64),
+    #[error("Cache entry not found: {0}")]
+    CacheEntryNotFound(String),
+    #[error("Cache full (allocated: {0}/{1})")]
+    CacheFull(usize, usize),
 }
 
 pub trait Clock {
@@ -43,11 +47,11 @@ pub trait Executor {
 pub trait Transport {
     type Error: core::error::Error;
 
-    fn read<'a, B>(&mut self, buf: &'a mut B) -> Result<usize, Self::Error>
+    fn read<B>(&mut self, buf: &mut B) -> Result<usize, Self::Error>
     where
         B: BufMut + ?Sized;
 
-    fn write<'a, B>(&mut self, src: &'a mut B) -> Result<usize, Self::Error>
+    fn write<B>(&mut self, src: &mut B) -> Result<usize, Self::Error>
     where
         B: Buf;
 }

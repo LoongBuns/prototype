@@ -3,8 +3,8 @@ use alloc::string::String;
 use bitvec::vec::BitVec;
 use protocol::ModuleMeta;
 
-use crate::Error;
 use super::cache::ModuleCache;
+use crate::Error;
 
 pub struct ModuleTransfer {
     name: String,
@@ -35,9 +35,17 @@ impl ModuleTransfer {
         self.received.all()
     }
 
-    pub fn add_chunk(&mut self, cache: &mut ModuleCache, index: usize, data: &[u8]) -> Result<(), Error> {
-        if index >= self.total_chunks || self.received[index] {
-            return Err(Error::InvalidChunk);
+    pub fn add_chunk(
+        &mut self,
+        cache: &mut ModuleCache,
+        index: usize,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        if index >= self.total_chunks {
+            return Err(Error::InvalidChunkIndex(index, self.total_chunks));
+        }
+        if self.received[index] {
+            return Err(Error::DuplicateChunk(index));
         }
 
         let expected_size = if index == self.total_chunks - 1 {
@@ -46,13 +54,13 @@ impl ModuleTransfer {
             self.chunk_size
         };
 
-        if data.len() != expected_size {
-            return Err(Error::InvalidChunk);
+        if data.len() == expected_size {
+            cache.put_slice(&self.name, index * self.chunk_size, data)?;
+            self.received.set(index, true);
+            Ok(())
+        } else {
+            Err(Error::InvalidChunkSize(expected_size, data.len()))
         }
-
-        cache.put_slice(&self.name, index * self.chunk_size, data);
-        self.received.set(index, true);
-        Ok(())
     }
 }
 
@@ -73,8 +81,13 @@ mod tests {
         let mut cache = ModuleCache::new(4096);
         let mut transfer = ModuleTransfer::new(&meta);
 
-        cache.put(&meta.name, meta.size as usize);
-        let data = vec![vec![0u8; 1024], vec![1u8; 1024], vec![2u8; 1024], vec![3u8; 512]];
+        cache.put(&meta.name, meta.size as usize).unwrap();
+        let data = vec![
+            vec![0u8; 1024],
+            vec![1u8; 1024],
+            vec![2u8; 1024],
+            vec![3u8; 512],
+        ];
         for (i, d) in data.iter().enumerate() {
             transfer.add_chunk(&mut cache, i, d).unwrap();
         }
@@ -98,7 +111,7 @@ mod tests {
         let mut cache = ModuleCache::new(4096);
         let mut transfer = ModuleTransfer::new(&meta);
 
-        cache.put(&meta.name, meta.size as usize);
+        cache.put(&meta.name, meta.size as usize).unwrap();
         transfer.add_chunk(&mut cache, 2, &vec![2u8; 512]).unwrap();
         transfer.add_chunk(&mut cache, 1, &vec![1u8; 1024]).unwrap();
         transfer.add_chunk(&mut cache, 0, &vec![0u8; 1024]).unwrap();
@@ -121,7 +134,7 @@ mod tests {
         let mut cache = ModuleCache::new(4096);
         let mut transfer = ModuleTransfer::new(&meta);
 
-        cache.put(&meta.name, meta.size as usize);
+        cache.put(&meta.name, meta.size as usize).unwrap();
         assert!(transfer.add_chunk(&mut cache, 0, &vec![0u8; 512]).is_err());
 
         transfer.add_chunk(&mut cache, 0, &vec![0u8; 1024]).unwrap();

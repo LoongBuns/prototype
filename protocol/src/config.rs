@@ -15,15 +15,11 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Self {
-        let host = option_env!("HOST").map_or_else(
-            || Arc::from("localhost"),
-            |host_str| Arc::from(host_str),
-        );
+        let host = option_env!("HOST").map_or(Arc::from("localhost"), Arc::from);
 
-        let port = option_env!("PORT").map_or_else(
-            || 3000,
-            |port_str| port_str.parse::<u16>().unwrap_or_else(|_| 3000),
-        );
+        let port = option_env!("PORT")
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(3000);
 
         let wifi = option_env!("WIFI_SSID")
             .zip(option_env!("WIFI_PASSWORD"))

@@ -8,8 +8,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use cache::ModuleCache;
 use bytes::{Buf, BytesMut};
+use cache::ModuleCache;
 use events::{EventQueue, SessionEvent};
 use log::{error, info, warn};
 use protocol::{Message, Type};
@@ -101,7 +101,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
         match self.transport.read(&mut shared.incoming) {
             Ok(n) if n > 0 => {
                 while let Ok((message, consumed)) = Message::decode(&shared.incoming) {
-                    self.events.borrow_mut().push(SessionEvent::Message(message));
+                    self.events
+                        .borrow_mut()
+                        .push(SessionEvent::Message(message));
                     shared.incoming.advance(consumed);
                 }
             }
@@ -139,7 +141,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
             }
             match event {
                 SessionEvent::Message(msg) => {
-                    if let Err(_) = self.handle_message(&msg) {
+                    if self.handle_message(&msg).is_err() {
                         self.state = SessionState::Failed;
                         break;
                     }
@@ -167,7 +169,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
             }
             SessionState::Executing { task_id, deadline } => {
                 if self.clock.timestamp() > *deadline {
-                    self.events.borrow_mut().push(SessionEvent::TaskTimeout(*task_id));
+                    self.events
+                        .borrow_mut()
+                        .push(SessionEvent::TaskTimeout(*task_id));
                 }
             }
             _ => {}
@@ -181,12 +185,15 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 let mut shared = self.shared.borrow_mut();
 
                 if let Some(cached) = shared.module_cache.get(&module_name) {
-                    let result = self.executor
+                    let result = self
+                        .executor
                         .execute(cached, params.to_owned())
                         .map_err(|e| Error::Execution(e.to_string()))?;
                     Self::send_result(&mut shared, *task_id, result)?;
                 } else {
-                    shared.module_cache.put(&module_name, module.size as usize);
+                    shared
+                        .module_cache
+                        .put(&module_name, module.size as usize)?;
 
                     if shared.module_cache.contains_key(&module_name) {
                         let transfer = ModuleTransfer::new(module);
@@ -203,21 +210,35 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 }
             }
             Message::ServerModule { task_id, chunk_index, chunk_data } => {
-                if let SessionState::Transferring { task_id: current_id, transfer, params, retries } = &mut self.state {
+                if let SessionState::Transferring {
+                    task_id: current_id,
+                    transfer,
+                    params,
+                    retries,
+                } = &mut self.state
+                {
                     if *current_id != *task_id {
-                        return Err(Error::InvalidChunk);
+                        return Err(Error::TaskNotFound(*task_id));
                     }
 
                     let mut shared = self.shared.borrow_mut();
-                    match transfer.add_chunk(&mut shared.module_cache, *chunk_index as usize, &chunk_data) {
+                    match transfer.add_chunk(
+                        &mut shared.module_cache,
+                        *chunk_index as usize,
+                        chunk_data,
+                    ) {
                         Ok(_) => {
                             Self::send_ack(&mut shared, *task_id, Some(*chunk_index), true)?;
 
                             if transfer.is_complete() {
                                 let module_name = transfer.name().to_string();
-                                let module_data = shared.module_cache.get(&module_name).ok_or(Error::CacheMiss)?;
+                                let module_data = shared
+                                    .module_cache
+                                    .get(&module_name)
+                                    .ok_or(Error::CacheEntryNotFound(module_name))?;
 
-                                let result = self.executor
+                                let result = self
+                                    .executor
                                     .execute(module_data, params.clone())
                                     .map_err(|e| Error::Execution(e.to_string()))?;
                                 Self::send_result(&mut shared, *task_id, result)?;
@@ -233,7 +254,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 }
             }
             Message::ServerAck { task_id, success } => {
-                if let Some(_task) = self.shared.borrow_mut().active_tasks.remove(&task_id) {
+                if let Some(_task) = self.shared.borrow_mut().active_tasks.remove(task_id) {
                     if *success {
                         info!("Task {} completed successfully", task_id);
                     } else {
