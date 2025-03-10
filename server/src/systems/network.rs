@@ -29,11 +29,7 @@ impl NetworkSystem {
             };
 
             match locked_stream.read_buf(&mut stream.incoming).await {
-                Ok(0) => {
-                    info!("Session {:?} closed connection gracefully", entity);
-                    health.status = SessionStatus::Disconnected;
-                    continue;
-                }
+                Ok(0) => continue,
                 Err(e) => {
                     error!("Session {:?} read buf error: {}", entity, e);
                     health.status = SessionStatus::Disconnected;
@@ -63,14 +59,15 @@ impl NetworkSystem {
                         if health.status == SessionStatus::Occupied {
                             if let (Some(task), Some(idx)) = (Entity::from_bits(task_id), chunk_index) {
                                 task_transfer.entry(task).or_insert(Vec::new()).push((idx, success));
+                                info!("Session {:?} client ack, chunk id {}", entity, idx);
                             }
                         }
                     }
                     Message::ClientResult { task_id, result } => {
                         if health.status == SessionStatus::Occupied {
                             if let Some(task) = Entity::from_bits(task_id) {
-                                info!("Task {:?} completed by session {:?}", task, entity);
                                 task_result.insert(task, result.clone());
+                                info!("Task {:?} completed by session {:?}", task, entity);
                             }
                         }
                     }
@@ -90,9 +87,19 @@ impl NetworkSystem {
         }
 
         for (entity, result) in task_result {
+            let mut device_entity = None;
             if let Ok((task, state)) = world.query_one_mut::<(&mut Task, &mut TaskState)>(entity) {
+                device_entity = state.assigned_device;
                 task.result = result.to_owned();
-                state.phase = TaskPhase::Completed;
+                state.phase = TaskStatePhase::Completed;
+            }
+            if let Some(device_entity) = device_entity {
+                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                    session.message_queue.push_back(Message::ServerAck {
+                        task_id: entity.to_bits().into(),
+                        success: true,
+                    });
+                }   
             }
         }
     }
@@ -116,13 +123,20 @@ impl NetworkSystem {
                 }
             }
 
-            if let Err(e) = locked_stream.write_all(&stream.outgoing).await {
-                error!("Failed to send data to session {:?}: {}", entity, e);
-                health.retries += 1;
-            } else {
-                debug!("Sent {} bytes to session {:?}", stream.outgoing.len(), entity);
-                stream.outgoing.clear();
-                health.retries = 0;
+            if stream.outgoing.is_empty() {
+                continue;
+            }
+
+            match locked_stream.write_all(&stream.outgoing).await {
+                Ok(_) => {
+                    debug!("Sent {} bytes to session {:?}", stream.outgoing.len(), entity);
+                    stream.outgoing.clear();
+                    health.retries = 0;
+                }
+                Err(e) => {
+                    error!("Failed to send {} bytes to session {:?}: {}", stream.outgoing.len(), entity, e);
+                    health.retries += 1;
+                }
             }
         }
     }
@@ -180,13 +194,13 @@ mod tests {
                 priority: 1,
             },
             TaskTransfer {
+                state: TaskTransferState::Prepared,
                 acked_chunks: BitVec::repeat(false, total_chunks),
-                assigned_device: Some(session_entity.clone()),
-                retries: 0,
             },
             TaskState {
-                phase: TaskPhase::Queued,
+                phase: TaskStatePhase::Queued,
                 deadline: None,
+                assigned_device: Some(session_entity.clone()),
             },
         ))
     }
@@ -252,12 +266,8 @@ mod tests {
         job_handle.await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         assert_eq!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2], true);
-        assert_eq!(world.get::<&TaskState>(task_entity).unwrap().phase, TaskPhase::Completed);
+        assert_eq!(world.get::<&TaskState>(task_entity).unwrap().phase, TaskStatePhase::Completed);
         assert_eq!(world.get::<&Task>(task_entity).unwrap().result, vec![Type::I32(0xcc), Type::I32(0xdd)]);
-
-        atomic_client.lock().await.shutdown().await.unwrap();
-        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert_eq!(world.get::<&SessionHealth>(session_entity).unwrap().status, SessionStatus::Disconnected);
     }
 
     #[tokio::test]

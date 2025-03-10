@@ -14,7 +14,7 @@ pub struct LifecycleSystem;
 
 impl LifecycleSystem {
     const MAX_RETRIES: u8 = 5;
-    const TIMEOUT: Duration = Duration::from_secs(30);
+    const TIMEOUT: Duration = Duration::from_secs(8);
 
     pub async fn accept_connection(world: &mut World, listener: &TcpListener) {
         if let Ok((stream, addr)) = listener.accept().await {

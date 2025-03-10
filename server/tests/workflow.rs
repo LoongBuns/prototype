@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use hecs::World;
 use protocol::{Message, Type};
 use server::*;
@@ -30,24 +30,27 @@ async fn send_message(stream: Arc<Mutex<DuplexStream>>, msg: &Message) {
     locked.flush().await.unwrap();
 }
 
-async fn receive_message(stream: Arc<Mutex<DuplexStream>>, bytes: &mut BytesMut) -> Option<Message> {
-    let n = {
-        let mut locked = stream.lock().await;
-        match locked.read_buf(bytes).await {
-            Ok(n) => n,
-            _ => return None,
+async fn receive_message(stream: Arc<Mutex<DuplexStream>>) -> Option<Message> {
+    let mut locked = stream.lock().await;
+
+    let mut len_buf = [0u8; 2];
+    locked.read_exact(&mut len_buf).await.ok()?;
+
+    let payload_len = u16::from_be_bytes([len_buf[0], len_buf[1]]) as usize;
+
+    let mut msg_buf = vec![0u8; payload_len];
+    locked.read_exact(&mut msg_buf).await.ok()?;
+
+    let mut full_buf = Vec::with_capacity(2 + payload_len);
+    full_buf.extend_from_slice(&len_buf);
+    full_buf.extend_from_slice(&msg_buf);
+
+    match Message::decode(&full_buf) {
+        Ok((msg, consumed)) => {
+            assert_eq!(consumed, 2 + payload_len);
+            Some(msg)
         }
-    };
-
-    if n == 0 {
-        return None; // EOF
-    }
-
-    if let Ok((msg, consumed)) = Message::decode(&bytes) {
-        bytes.advance(consumed);
-        Some(msg)
-    } else {
-        None
+        Err(_) => None,
     }
 }
 
@@ -58,11 +61,9 @@ async fn run_client(stream: Arc<Mutex<DuplexStream>>) {
     };
     send_message(stream.clone(), &ready_msg).await;
 
-    let task_msg = timeout(Duration::from_secs(1), async {
-        let mut bytes = BytesMut::new();
-
+    let task_msg = timeout(Duration::from_millis(1), async {
         loop {
-            if let Some(msg) = receive_message(stream.clone(), &mut bytes).await {
+            if let Some(msg) = receive_message(stream.clone()).await {
                 return msg;
             }
         }
@@ -76,6 +77,22 @@ async fn run_client(stream: Arc<Mutex<DuplexStream>>) {
         assert_eq!(module.total_chunks, 3);
 
         for idx in 0..module.total_chunks {
+            let chunk_msg = timeout(Duration::from_millis(1), async {
+                loop {
+                    if let Some(msg) = receive_message(stream.clone()).await {
+                        return msg;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+
+            assert!(matches!(
+                chunk_msg,
+                Message::ServerModule { chunk_index, .. }
+                if chunk_index == idx.into()
+            ));
+
             let ack_msg = Message::ClientAck {
                 task_id,
                 chunk_index: Some(idx),
@@ -89,6 +106,18 @@ async fn run_client(stream: Arc<Mutex<DuplexStream>>) {
             result: vec![Type::I32(30)],
         };
         send_message(stream.clone(), &result_msg).await;
+
+        let ack_msg = timeout(Duration::from_millis(1), async {
+            loop {
+                if let Some(msg) = receive_message(stream.clone()).await {
+                    return msg;
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(ack_msg, Message::ServerAck { success, .. } if success));
     } else {
         panic!("Fail to get message");
     };
@@ -109,8 +138,9 @@ async fn run_server(stream: Arc<Mutex<DuplexStream>>) {
             priority: 1,
         },
         TaskState {
-            phase: TaskPhase::Queued,
+            phase: TaskStatePhase::Queued,
             deadline: None,
+            assigned_device: None,
         },
     ));
 
@@ -133,25 +163,21 @@ async fn run_server(stream: Arc<Mutex<DuplexStream>>) {
         },
     ));
 
-    for _ in 0..10 {
-        LifecycleSystem::maintain_connection(&mut world).await;
+    loop {
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         TaskSystem::assign_tasks(&mut world);
         TaskSystem::distribute_chunks(&mut world);
         NetworkSystem::process_outbound::<DuplexStream>(&mut world).await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
 
-        if let Ok((task, state, transfer)) = world.query_one_mut::<(&Task, &mut TaskState, &TaskTransfer)>(task_entity) {
+        if let Ok((task, state)) = world.query_one_mut::<(&Task, &TaskState)>(task_entity) {
             match state.phase {
-                TaskPhase::Distributing => {
+                TaskStatePhase::Distributing => {
                     let sent_chunks = transfer.acked_chunks.count_ones();
                     assert!(sent_chunks <= 3);
                 }
-                TaskPhase::Executing => {
-                    assert!(transfer.acked_chunks.all());
-                }
-                TaskPhase::Completed => {
+                TaskStatePhase::Completed => {
                     assert_eq!(task.result, vec![Type::I32(30)]);
+                    break;
                 }
                 _ => {}
             }

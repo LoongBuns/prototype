@@ -5,15 +5,21 @@ use protocol::Type;
 
 use hecs::Entity;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskTransferState {
+    Prepared,
+    Scheduled,
+    Retry,
+}
+
 #[derive(Debug, Clone)]
 pub struct TaskTransfer {
+    pub state: TaskTransferState,
     pub acked_chunks: BitVec,
-    pub assigned_device: Option<Entity>,
-    pub retries: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskPhase {
+pub enum TaskStatePhase {
     Queued,
     Distributing,
     Executing,
@@ -23,8 +29,9 @@ pub enum TaskPhase {
 
 #[derive(Debug, Clone)]
 pub struct TaskState {
-    pub phase: TaskPhase,
+    pub phase: TaskStatePhase,
     pub deadline: Option<SystemTime>,
+    pub assigned_device: Option<Entity>,
 }
 
 #[derive(Debug, Clone)]

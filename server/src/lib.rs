@@ -36,8 +36,9 @@ pub async fn run(host: &str, port: u16) {
                 priority: 1,
             },
             TaskState {
-                phase: TaskPhase::Queued,
+                phase: TaskStatePhase::Queued,
                 deadline: None,
+                assigned_device: None,
             },
         ));
     world.spawn_batch(tasks);
