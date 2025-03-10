@@ -16,19 +16,15 @@ impl TaskSystem {
             .query::<(&Task, &TaskState)>()
             .without::<&TaskTransfer>()
             .iter()
-            .filter_map(|(entity, (task, state))| {
-                (state.phase == TaskPhase::Queued)
-                    .then(|| (Reverse(task.module_binary.len() + 2048), entity))
-            })
+            .filter(|&(_, (_, state))| state.phase == TaskPhase::Queued)
+            .map(|(entity, (task, _))| (Reverse(task.module_binary.len() + 2048), entity))
             .collect::<BinaryHeap<_>>();
 
         let available_devices = world
             .query::<(&Session, &SessionHealth)>()
             .iter()
-            .filter_map(|(entity, (session, health))| {
-                (health.status == SessionStatus::Connected)
-                    .then(|| (Reverse(session.device_ram as usize), entity))
-            })
+            .filter(|&(_, (_, health))| health.status == SessionStatus::Connected)
+            .map(|(entity, (session, _))| (Reverse(session.device_ram as usize), entity))
             .collect::<BinaryHeap<_>>();
 
         let mut available_devices = available_devices
@@ -93,12 +89,11 @@ impl TaskSystem {
                         .module_binary
                         .chunks(task.chunk_size as usize)
                         .enumerate()
-                        .filter_map(|(chunk_idx, chunk)| {
-                            (!transfer.acked_chunks[chunk_idx]).then(|| Message::ServerModule {
-                                task_id: task_entity.to_bits().into(),
-                                chunk_index: chunk_idx as u32,
-                                chunk_data: chunk.to_vec(),
-                            })
+                        .filter(|&(chunk_idx, _)| !transfer.acked_chunks[chunk_idx])
+                        .map(|(chunk_idx, chunk)| Message::ServerModule {
+                            task_id: task_entity.to_bits().into(),
+                            chunk_index: chunk_idx as u32,
+                            chunk_data: chunk.to_vec(),
                         })
                         .collect::<Vec<_>>();
 
@@ -116,11 +111,9 @@ impl TaskSystem {
                 }
 
                 world.remove_one::<TaskTransfer>(task_entity).ok();
-            } else {
-                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
-                    session.message_queue.extend(messages);
-                    debug!("Task {:?} send {} chunks to device {:?}", task_entity, session.message_queue.len(), device_entity);
-                }
+            } else if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                session.message_queue.extend(messages);
+                debug!("Task {:?} send {} chunks to device {:?}", task_entity, session.message_queue.len(), device_entity);
             }
         }
     }

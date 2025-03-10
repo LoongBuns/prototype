@@ -32,7 +32,7 @@ pub async fn run(host: &str, port: u16) {
                 result: vec![],
                 created_at: SystemTime::now(),
                 chunk_size: CHUNK_SIZE as u32,
-                total_chunks: ((module.binary.len() + CHUNK_SIZE - 1) / CHUNK_SIZE) as u32,
+                total_chunks: module.binary.len().div_ceil(CHUNK_SIZE) as u32,
                 priority: 1,
             },
             TaskState {

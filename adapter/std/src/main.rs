@@ -68,7 +68,7 @@ pub struct TcpTransport {
 impl TcpTransport {
     pub fn new(addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(addr)?;
-
+        stream.set_nonblocking(true)?;
         Ok(Self { stream })
     }
 }
