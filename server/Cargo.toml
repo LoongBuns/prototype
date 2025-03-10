@@ -12,4 +12,5 @@ env_logger = "0.11"
 hecs = "0.10"
 log = "0.4"
 protocol.workspace = true
+task.workspace = true
 tokio = { version = "1", features = ["full"] }

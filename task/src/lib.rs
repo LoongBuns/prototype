@@ -50,13 +50,6 @@ pub fn load_modules() -> Vec<Module> {
                     });
                 }
             }
-            "fiber" => {
-                modules.push(Module {
-                    name: "fiber".into(),
-                    binary: module.binary.to_vec(),
-                    params: vec![],
-                });
-            }
             _ => {}
         }
     }

@@ -1,14 +1,15 @@
 mod components;
-mod module;
 mod systems;
 
 use std::time::SystemTime;
 
-use components::*;
 use hecs::World;
 use log::info;
-use module::load_modules;
+use task::load_modules;
 use tokio::net::{TcpListener, TcpStream};
+
+pub use self::components::*;
+pub use self::systems::*;
 
 const CHUNK_SIZE: usize = 1024;
 

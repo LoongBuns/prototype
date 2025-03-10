@@ -1,0 +1,9 @@
+[package]
+name = "task"
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+protocol.workspace = true
