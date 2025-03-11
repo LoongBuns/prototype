@@ -147,7 +147,7 @@ mod tests {
                 result: vec![],
                 created_at: SystemTime::now(),
                 chunk_size: chunk_size as u32,
-                total_chunks: ((size + chunk_size - 1) / chunk_size) as u32,
+                total_chunks: (size.div_ceil(chunk_size)) as u32,
                 priority: 1,
             },
             TaskState {

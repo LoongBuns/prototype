@@ -76,9 +76,7 @@ fn generate_static_modules(dist_dir: &Path) -> Result<(), Box<dyn Error>> {
         let path = entry.path();
 
         if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
-            let module_name = path.file_stem()
-                .and_then(|n| n.to_str())
-                .unwrap();
+            let module_name = path.file_stem().and_then(|n| n.to_str()).unwrap();
 
             let wasm_bytes = fs::read(&path)?;
 

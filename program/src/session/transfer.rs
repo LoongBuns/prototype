@@ -82,7 +82,7 @@ mod tests {
         let mut transfer = ModuleTransfer::new(&meta);
 
         cache.put(&meta.name, meta.size as usize).unwrap();
-        let data = vec![
+        let data = [
             vec![0u8; 1024],
             vec![1u8; 1024],
             vec![2u8; 1024],

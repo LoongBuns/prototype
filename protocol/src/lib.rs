@@ -74,7 +74,7 @@ pub enum Message {
 }
 
 impl Message {
-    const HEADER_SIZE: usize = 2;
+    pub const HEADER_SIZE: usize = 2;
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let config = bincode::config::standard()

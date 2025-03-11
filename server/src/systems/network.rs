@@ -73,6 +73,8 @@ impl NetworkSystem {
                                 task_result.insert(task, result.clone());
                                 info!("Task {:?} completed by session {:?}", task, entity);
                             }
+
+                            health.status = SessionStatus::Connected
                         }
                     }
                     _ => {}
@@ -185,7 +187,7 @@ mod tests {
     }
 
     fn create_mock_task(world: &mut World, session_entity: &Entity, size: usize, chunk_size: usize) -> Entity {
-        let total_chunks = (size + chunk_size - 1) / chunk_size;
+        let total_chunks = size.div_ceil(chunk_size);
         world.spawn((
             Task {
                 module_name: "mock_task".into(),
@@ -204,7 +206,7 @@ mod tests {
             TaskState {
                 phase: TaskStatePhase::Queued,
                 deadline: None,
-                assigned_device: Some(session_entity.clone()),
+                assigned_device: Some(*session_entity),
             },
         ))
     }
@@ -269,7 +271,7 @@ mod tests {
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         job_handle.await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert_eq!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2], true);
+        assert!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2]);
         assert_eq!(world.get::<&TaskState>(task_entity).unwrap().phase, TaskStatePhase::Completed);
         assert_eq!(world.get::<&Task>(task_entity).unwrap().result, vec![Type::I32(0xcc), Type::I32(0xdd)]);
 
