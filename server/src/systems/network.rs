@@ -29,7 +29,11 @@ impl NetworkSystem {
             };
 
             match locked_stream.read_buf(&mut stream.incoming).await {
-                Ok(0) => continue,
+                Ok(0) => {
+                    info!("Session {:?} closed connection gracefully", entity);
+                    health.status = SessionStatus::Disconnected;
+                    continue;
+                }
                 Err(e) => {
                     error!("Session {:?} read buf error: {}", entity, e);
                     health.status = SessionStatus::Disconnected;
@@ -99,7 +103,7 @@ impl NetworkSystem {
                         task_id: entity.to_bits().into(),
                         success: true,
                     });
-                }   
+                }
             }
         }
     }
@@ -268,6 +272,10 @@ mod tests {
         assert_eq!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2], true);
         assert_eq!(world.get::<&TaskState>(task_entity).unwrap().phase, TaskStatePhase::Completed);
         assert_eq!(world.get::<&Task>(task_entity).unwrap().result, vec![Type::I32(0xcc), Type::I32(0xdd)]);
+
+        atomic_client.lock().await.shutdown().await.unwrap();
+        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
+        assert_eq!(world.get::<&SessionHealth>(session_entity).unwrap().status, SessionStatus::Disconnected);
     }
 
     #[tokio::test]

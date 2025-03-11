@@ -22,9 +22,8 @@ pub async fn run(host: &str, port: u16) {
     info!("Server listening on {:?}", listener.local_addr());
 
     let modules = load_modules();
-    let tasks = modules
-        .iter()
-        .map(|module| (
+    let tasks = modules.iter().map(|module| {
+        (
             Task {
                 module_name: module.name.to_owned(),
                 module_binary: module.binary.to_owned(),
@@ -40,7 +39,8 @@ pub async fn run(host: &str, port: u16) {
                 deadline: None,
                 assigned_device: None,
             },
-        ));
+        )
+    });
     world.spawn_batch(tasks);
 
     loop {

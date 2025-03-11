@@ -91,7 +91,8 @@ impl TaskSystem {
                         .chunks(task.chunk_size as usize)
                         .enumerate()
                         .filter(|(chunk_idx, _)| {
-                            !matches!(transfer.state, TaskTransferState::Scheduled) && !transfer.acked_chunks[*chunk_idx]
+                            !matches!(transfer.state, TaskTransferState::Scheduled)
+                                && !transfer.acked_chunks[*chunk_idx]
                         })
                         .map(|(chunk_idx, chunk)| Message::ServerModule {
                             task_id: task_entity.to_bits().into(),

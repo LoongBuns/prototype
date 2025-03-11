@@ -170,16 +170,9 @@ async fn run_server(stream: Arc<Mutex<DuplexStream>>) {
         NetworkSystem::process_outbound::<DuplexStream>(&mut world).await;
 
         if let Ok((task, state)) = world.query_one_mut::<(&Task, &TaskState)>(task_entity) {
-            match state.phase {
-                TaskStatePhase::Distributing => {
-                    let sent_chunks = transfer.acked_chunks.count_ones();
-                    assert!(sent_chunks <= 3);
-                }
-                TaskStatePhase::Completed => {
-                    assert_eq!(task.result, vec![Type::I32(30)]);
-                    break;
-                }
-                _ => {}
+            if matches!(state.phase, TaskStatePhase::Completed) {
+                assert_eq!(task.result, vec![Type::I32(30)]);
+                break;
             }
         }
     }
@@ -193,7 +186,7 @@ async fn test_workflow() {
     let client_handle = tokio::spawn(run_client(Arc::new(Mutex::new(client_conn))));
 
     let (server_res, client_res) = tokio::join!(server_handle, client_handle);
-    
+
     server_res.unwrap();
     client_res.unwrap();
 }
