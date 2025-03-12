@@ -29,7 +29,10 @@ where
         Ok(())
     }
 
-    pub async fn receive(&mut self, timeout_duration: Option<Duration>) -> Result<Message, Box<dyn Error>> {
+    pub async fn receive(
+        &mut self,
+        timeout_duration: Option<Duration>,
+    ) -> Result<Message, Box<dyn Error>> {
         async fn read_message<T>(client: &TestClient<T>) -> Result<Message, Box<dyn Error>>
         where
             T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -53,21 +56,23 @@ where
         }
 
         match timeout_duration {
-            Some(duration) => {
-                Ok(timeout(duration, async {
-                    loop {
-                        if let Ok(msg) = read_message(self).await {
-                            return msg;
-                        }
+            Some(duration) => Ok(timeout(duration, async {
+                loop {
+                    if let Ok(msg) = read_message(self).await {
+                        return msg;
                     }
-                })
-                .await?)
-            }
+                }
+            })
+            .await?),
             None => read_message(self).await,
         }
     }
 
-    pub async fn handshake(&mut self, module: Option<String>, ram: u64) -> Result<(), Box<dyn Error>> {
+    pub async fn handshake(
+        &mut self,
+        module: Option<String>,
+        ram: u64,
+    ) -> Result<(), Box<dyn Error>> {
         self.send(&Message::ClientReady {
             module_name: module,
             device_ram: ram,

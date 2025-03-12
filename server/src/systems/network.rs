@@ -150,14 +150,12 @@ impl NetworkSystem {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
-    use std::time::Duration;
 
     use bitvec::vec::BitVec;
     use bytes::BytesMut;
-    use protocol::{Message, ModuleMeta, Type};
-    use tokio::io::{AsyncRead, AsyncWrite};
+    use protocol::{ModuleMeta, Type};
     use tokio::sync::Mutex;
 
     use super::*;
@@ -172,6 +170,7 @@ mod tests {
                 device_ram: 1024,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
+                cached_modules: HashSet::new(),
             },
             SessionStream {
                 inner: stream.clone(),

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -39,4 +39,5 @@ pub struct Session {
     pub device_ram: u64,
     pub message_queue: VecDeque<Message>,
     pub latency: Duration,
+    pub cached_modules: HashSet<String>,
 }

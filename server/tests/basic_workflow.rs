@@ -24,15 +24,25 @@ async fn run_client(stream: DuplexStream) {
     let mut client = TestClient::new(stream);
     client.handshake(None, 1024 * 8).await.unwrap();
 
-    let task_msg = client.receive(Some(Duration::from_millis(1))).await.unwrap();
+    let task_msg = client
+        .receive(Some(Duration::from_millis(1)))
+        .await
+        .unwrap();
     if let Message::ServerTask { task_id, module, .. } = task_msg {
         assert_eq!(module.name, "test");
         assert_eq!(module.chunk_size, 16);
         assert_eq!(module.total_chunks, 3);
 
         for idx in 0..module.total_chunks {
-            let chunk_msg = client.receive(Some(Duration::from_millis(1))).await.unwrap();
-            assert!(matches!(chunk_msg, Message::ServerModule { chunk_index, .. } if chunk_index == idx));
+            let chunk_msg = client
+                .receive(Some(Duration::from_millis(1)))
+                .await
+                .unwrap();
+            assert!(matches!(
+                chunk_msg,
+                Message::ServerModule { chunk_index, .. }
+                if chunk_index == idx
+            ));
 
             let ack_msg = Message::ClientAck {
                 task_id,
@@ -48,7 +58,10 @@ async fn run_client(stream: DuplexStream) {
         };
         client.send(&result_msg).await.unwrap();
 
-        let ack_msg = client.receive(Some(Duration::from_millis(1))).await.unwrap();
+        let ack_msg = client
+            .receive(Some(Duration::from_millis(1)))
+            .await
+            .unwrap();
         assert!(matches!(ack_msg, Message::ServerAck { success: true, .. }));
     } else {
         panic!("Fail to get message");
@@ -84,6 +97,11 @@ async fn run_server(stream: DuplexStream) {
 #[tokio::test]
 async fn test_workflow() {
     let (server_conn, client_conn) = duplex(1024);
+
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Trace)
+        .try_init()
+        .unwrap();
 
     let server_handle = tokio::spawn(run_server(server_conn));
     let client_handle = tokio::spawn(run_client(client_conn));

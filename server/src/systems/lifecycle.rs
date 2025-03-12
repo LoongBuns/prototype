@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -25,6 +25,7 @@ impl LifecycleSystem {
                     device_ram: 0,
                     message_queue: VecDeque::new(),
                     latency: Duration::default(),
+                    cached_modules: HashSet::new(),
                 },
                 SessionStream {
                     inner: Arc::new(Mutex::new(stream)),
@@ -93,10 +94,7 @@ impl LifecycleSystem {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-    use std::time::{Duration, SystemTime};
-
-    use hecs::{Entity, World};
+    use hecs::Entity;
 
     use super::*;
 
@@ -107,6 +105,7 @@ mod tests {
                 device_ram: 1024,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
+                cached_modules: HashSet::new(),
             },
             SessionHealth {
                 retries: 0,

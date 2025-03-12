@@ -58,23 +58,33 @@ impl TaskSystem {
                     )
                 };
 
-                world
-                    .insert_one(
-                        task_entity,
-                        TaskTransfer {
-                            state: TaskTransferState::Prepared,
-                            acked_chunks: BitVec::repeat(false, module.total_chunks as usize),
-                        },
-                    )
-                    .unwrap();
-
                 if let Ok((session, health)) = world.query_one_mut::<(&mut Session, &mut SessionHealth)>(device_entity) {
+                    let chunk_count = module.total_chunks as usize;
+                    let module_name = module.name.to_owned();
                     health.status = SessionStatus::Occupied;
+
                     session.message_queue.push_back(Message::ServerTask {
                         task_id: task_entity.to_bits().into(),
                         module,
                         params,
                     });
+
+                    if session.cached_modules.contains(&module_name) {
+                        if let Ok(mut state) = world.get::<&mut TaskState>(task_entity) {
+                            state.phase = TaskStatePhase::Executing;
+                            info!("Task {:?} found shortcut device {:?}, moving to executing phase", task_entity, device_entity);
+                        }
+                    } else {
+                        world
+                            .insert_one(
+                                task_entity,
+                                TaskTransfer {
+                                    state: TaskTransferState::Prepared,
+                                    acked_chunks: BitVec::repeat(false, chunk_count),
+                                },
+                            )
+                            .unwrap();
+                    }
                 }
             }
         }
@@ -107,8 +117,18 @@ impl TaskSystem {
             .collect::<Vec<_>>();
 
         for (task_entity, device_entity, messages) in distributing_tasks {
-            let finish = world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks.all();
+            let (module_name, finish) = {
+                let (task, transfer) = world
+                    .query_one_mut::<(&Task, &TaskTransfer)>(task_entity)
+                    .unwrap();
+                (task.module_name.clone(), transfer.acked_chunks.all())
+            };
+
             if finish {
+                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                    session.cached_modules.insert(module_name);
+                }
+
                 if let Ok(mut state) = world.get::<&mut TaskState>(task_entity) {
                     state.phase = TaskStatePhase::Executing;
                     info!("Task {:?} all chunks acknowledged, moving to executing phase", task_entity);
@@ -130,11 +150,11 @@ impl TaskSystem {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::time::{Duration, SystemTime};
 
-    use hecs::{Entity, World};
-    use protocol::{Message, Type};
+    use hecs::Entity;
+    use protocol::Type;
 
     use super::*;
 
@@ -165,6 +185,7 @@ mod tests {
                 device_ram: ram as u64,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
+                cached_modules: HashSet::new(),
             },
             SessionHealth {
                 retries: 0,

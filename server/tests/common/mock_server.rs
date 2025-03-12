@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -40,6 +40,7 @@ impl TestServer {
                 device_ram: 0,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
+                cached_modules: HashSet::new(),
             },
             SessionStream {
                 inner: Arc::new(Mutex::new(stream)),

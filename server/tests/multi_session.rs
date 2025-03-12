@@ -1,5 +1,6 @@
 mod common;
 
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use common::{TestClient, TestServer};
@@ -24,27 +25,41 @@ const TEST_MODULE: &[u8] = &[
 
 async fn run_client(streams: Vec<DuplexStream>) {
     async fn process_client(client: &mut TestClient<DuplexStream>) {
+        let mut cached: Option<String> = None;
         loop {
-            let task_msg = client.receive(Some(Duration::from_millis(1))).await.unwrap();
-            if let Message::ServerTask { task_id, module, .. } = task_msg {
-                for idx in 0..module.total_chunks {
-                    client.receive(Some(Duration::from_millis(1))).await.unwrap();
+            let task_msg = client
+                .receive(Some(Duration::from_millis(1)))
+                .await
+                .unwrap();
 
-                    let ack_msg = Message::ClientAck {
-                        task_id,
-                        chunk_index: Some(idx),
-                        success: true,
-                    };
-                    client.send(&ack_msg).await.unwrap();
+            if let Message::ServerTask { task_id, module, .. } = &task_msg {
+                if cached.as_ref().is_none_or(|name| name != &module.name) {
+                    for idx in 0..module.total_chunks {
+                        client
+                            .receive(Some(Duration::from_millis(1)))
+                            .await
+                            .unwrap();
+
+                        let ack_msg = Message::ClientAck {
+                            task_id: *task_id,
+                            chunk_index: Some(idx),
+                            success: true,
+                        };
+                        client.send(&ack_msg).await.unwrap();
+                    }
+                    cached = Some(module.name.clone());
                 }
 
                 let result_msg = Message::ClientResult {
-                    task_id,
+                    task_id: *task_id,
                     result: vec![Type::I32(30)],
                 };
                 client.send(&result_msg).await.unwrap();
-    
-                let ack_msg = client.receive(Some(Duration::from_millis(1))).await.unwrap();
+
+                let ack_msg = client
+                    .receive(Some(Duration::from_millis(1)))
+                    .await
+                    .unwrap();
                 assert!(matches!(ack_msg, Message::ServerAck { success: true, .. }));
             }
         }
@@ -85,19 +100,19 @@ async fn run_server(streams: Vec<DuplexStream>, task_count: usize) {
         })
         .collect();
 
-    let mut completed = 0;
+    let mut completed = HashMap::new();
     loop {
         server.process_lifecycle::<DuplexStream>().await;
 
         for entity in &task_entities {
             if let Ok(state) = server.world.get::<&TaskState>(*entity) {
                 if matches!(state.phase, TaskStatePhase::Completed) {
-                    completed += 1;
+                    completed.insert(entity, true);
                 }
             }
         }
 
-        if completed == task_count {
+        if completed.len() == task_count && completed.iter().all(|(_, v)| *v) {
             break;
         }
     }
@@ -110,6 +125,11 @@ async fn run_server(streams: Vec<DuplexStream>, task_count: usize) {
 async fn test_multi_sessions() {
     let (server_conn1, client_conn1) = duplex(1024);
     let (server_conn2, client_conn2) = duplex(1024);
+
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Trace)
+        .try_init()
+        .unwrap();
 
     let mut server_handle = tokio::spawn(run_server(vec![server_conn1, server_conn2], 10));
     let mut client_handle = tokio::spawn(run_client(vec![client_conn1, client_conn2]));
