@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use bytes::BytesMut;
 use hecs::{Entity, World};
 use server::*;
-use tokio::io::*;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 
 pub struct TestServer {
@@ -40,7 +40,7 @@ impl TestServer {
                 device_ram: 0,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
-                cached_modules: HashSet::new(),
+                modules: HashSet::new(),
             },
             SessionStream {
                 inner: Arc::new(Mutex::new(stream)),
@@ -62,6 +62,7 @@ impl TestServer {
         NetworkSystem::process_inbound::<T>(&mut self.world).await;
         TaskSystem::assign_tasks(&mut self.world);
         TaskSystem::distribute_chunks(&mut self.world);
+        TaskSystem::finalize_tasks(&mut self.world);
         NetworkSystem::process_outbound::<T>(&mut self.world).await;
     }
 }

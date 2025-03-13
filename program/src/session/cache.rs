@@ -24,6 +24,10 @@ impl ModuleCache {
         }
     }
 
+    pub fn keys(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
     pub fn contains_key(&mut self, key: &str) -> bool {
         self.entries.contains_key(key)
     }

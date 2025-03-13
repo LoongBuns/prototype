@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use bytes::Buf;
 use hecs::{Entity, World};
 use log::{debug, error, info};
-use protocol::Message;
-use tokio::io::*;
+use protocol::{AckInfo, Message};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::components::*;
 
@@ -35,7 +35,7 @@ impl NetworkSystem {
                     continue;
                 }
                 Err(e) => {
-                    error!("Session {:?} read buf error: {}", entity, e);
+                    error!("Session {:?} read stream failed: {}", entity, e);
                     health.status = SessionStatus::Disconnected;
                     continue;
                 }
@@ -50,28 +50,49 @@ impl NetworkSystem {
                     Message::Heartbeat { timestamp } => {
                         let last_record = UNIX_EPOCH + Duration::from_nanos(timestamp);
                         let latency = now.duration_since(last_record).unwrap();
+                        info!(
+                            "Session {entity:?} received heartbeat with latency {}ms",
+                            latency.as_millis()
+                        );
                         session.latency = latency;
-                        debug!("Session {:?} heartbeat, latency {} ms", entity, latency.as_millis());
                     }
-                    Message::ClientReady { device_ram, .. } => {
+                    Message::ClientReady { modules, device_ram } => {
                         if health.status == SessionStatus::Connected {
+                            info!(
+                                "Session {:?} received client ready with cached module {:?} and ram {}",
+                                entity, modules, device_ram
+                            );
+                            session.modules.clear();
+                            session.modules.extend(modules);
                             session.device_ram = device_ram;
-                            info!("Session {:?} client ready, device ram {}", entity, device_ram);
                         }
                     }
-                    Message::ClientAck { task_id, chunk_index, success } => {
+                    Message::ClientAck { task_id, ack_info } => {
                         if health.status == SessionStatus::Occupied {
-                            if let (Some(task), Some(idx)) = (Entity::from_bits(task_id), chunk_index) {
-                                task_transfer.entry(task).or_insert(Vec::new()).push((idx, success));
-                                info!("Session {:?} client ack, chunk id {}", entity, idx);
+                            if let Some(task) = Entity::from_bits(task_id) {
+                                info!(
+                                    "Session {:?} received client ack with info {:?} for task {:?}",
+                                    entity, ack_info, task
+                                );
+                                if let AckInfo::Task { modules } = &ack_info {
+                                    session.modules.clear();
+                                    session.modules.extend(modules.clone());
+                                }
+                                task_transfer
+                                    .entry(task)
+                                    .or_insert(Vec::new())
+                                    .push(ack_info);
                             }
                         }
                     }
                     Message::ClientResult { task_id, result } => {
                         if health.status == SessionStatus::Occupied {
                             if let Some(task) = Entity::from_bits(task_id) {
+                                info!(
+                                    "Session {:?} received client result with result {:?} for task {:?}",
+                                    entity, result, task
+                                );
                                 task_result.insert(task, result.clone());
-                                info!("Task {:?} completed by session {:?}", task, entity);
                             }
 
                             health.status = SessionStatus::Connected
@@ -84,10 +105,21 @@ impl NetworkSystem {
             }
         }
 
-        for (entity, chunks) in task_transfer {
-            if let Ok(transfer) = world.query_one_mut::<&mut TaskTransfer>(entity) {
-                for (idx, success) in chunks {
-                    transfer.acked_chunks.set(idx as usize, success);
+        for (entity, acks) in task_transfer {
+            if let Ok((task, transfer)) = world.query_one_mut::<(&Task, &mut TaskTransfer)>(entity) {
+                for ack_info in acks {
+                    match ack_info {
+                        AckInfo::Module { chunk_index, success } => {
+                            transfer.acked_chunks.set(chunk_index as usize, success);
+                        }
+                        AckInfo::Task { modules } => {
+                            transfer.state = TaskTransferState::Requested;
+                            if modules.contains(&task.module_name) {
+                                transfer.acked_chunks.fill(true);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -135,12 +167,21 @@ impl NetworkSystem {
 
             match locked_stream.write_all(&stream.outgoing).await {
                 Ok(_) => {
-                    debug!("Sent {} bytes to session {:?}", stream.outgoing.len(), entity);
+                    debug!(
+                        "Sent {} bytes to session {:?}",
+                        stream.outgoing.len(),
+                        entity
+                    );
                     stream.outgoing.clear();
                     health.retries = 0;
                 }
                 Err(e) => {
-                    error!("Failed to send {} bytes to session {:?}: {}", stream.outgoing.len(), entity, e);
+                    error!(
+                        "Failed to send {} bytes to session {:?}: {}",
+                        stream.outgoing.len(),
+                        entity,
+                        e
+                    );
                     health.retries += 1;
                 }
             }
@@ -153,9 +194,10 @@ mod tests {
     use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
 
-    use bitvec::vec::BitVec;
+    use bitvec::prelude::*;
     use bytes::BytesMut;
     use protocol::{ModuleMeta, Type};
+    use tokio::io::{duplex, DuplexStream};
     use tokio::sync::Mutex;
 
     use super::*;
@@ -170,7 +212,7 @@ mod tests {
                 device_ram: 1024,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
-                cached_modules: HashSet::new(),
+                modules: HashSet::new(),
             },
             SessionStream {
                 inner: stream.clone(),
@@ -185,22 +227,25 @@ mod tests {
         ))
     }
 
-    fn create_mock_task(world: &mut World, session_entity: &Entity, size: usize, chunk_size: usize) -> Entity {
-        let total_chunks = size.div_ceil(chunk_size);
+    fn create_mock_task(world: &mut World, session_entity: &Entity) -> Entity {
+        const TOTAL_SIZE: usize = 1024;
+        const CHUNK_SIZE: usize = 256;
+
+        let total_chunks = TOTAL_SIZE.div_ceil(CHUNK_SIZE);
         world.spawn((
             Task {
                 module_name: "mock_task".into(),
-                module_binary: vec![0u8; size],
+                module_binary: vec![0u8; TOTAL_SIZE],
                 params: vec![Type::I32(0)],
                 result: vec![],
                 created_at: SystemTime::now(),
-                chunk_size: chunk_size as u32,
+                chunk_size: CHUNK_SIZE as u32,
                 total_chunks: total_chunks as u32,
                 priority: 1,
             },
             TaskTransfer {
-                state: TaskTransferState::Prepared,
-                acked_chunks: BitVec::repeat(false, total_chunks),
+                state: TaskTransferState::Requested,
+                acked_chunks: bitvec![0; total_chunks],
             },
             TaskState {
                 phase: TaskStatePhase::Queued,
@@ -211,29 +256,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_inbound() {
+    async fn test_process_inbound_heartbeat() {
+        let (mut client, server) = duplex(1024);
+        let mut world = World::new();
+
+        let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
+
+        let message = Message::Heartbeat {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+        };
+
+        let latency = world.get::<&Session>(session_entity).unwrap().latency;
+        assert_eq!(latency, Default::default());
+        let encoded = message.encode().unwrap();
+        client.write_all(&encoded).await.unwrap();
+        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
+        let latency = world.get::<&Session>(session_entity).unwrap().latency;
+        assert!(latency.as_nanos() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_inbound_ready() {
+        let (mut client, server) = duplex(1024);
+        let mut world = World::new();
+
+        let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
+
+        let message = Message::ClientReady {
+            modules: Vec::new(),
+            device_ram: 2048,
+        };
+
+        let ram = world.get::<&Session>(session_entity).unwrap().device_ram;
+        assert_eq!(ram, 1024);
+        let encoded = message.encode().unwrap();
+        client.write_all(&encoded).await.unwrap();
+        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
+        let ram = world.get::<&Session>(session_entity).unwrap().device_ram;
+        assert_eq!(ram, 2048);
+    }
+
+    #[tokio::test]
+    async fn test_process_inbound_ack_result() {
         let (client, server) = duplex(1024);
         let atomic_client = Arc::new(Mutex::new(client));
         let mut world = World::new();
 
         let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
-        let task_entity = create_mock_task(&mut world, &session_entity, 1024, 256);
+        let task_entity = create_mock_task(&mut world, &session_entity);
 
-        let heartbeat_message = Message::Heartbeat {
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
-        };
-        let ready_message = Message::ClientReady {
-            device_ram: 2048,
-            module_name: None,
-        };
         let messages = vec![
             Message::ClientAck {
                 task_id: task_entity.to_bits().into(),
-                chunk_index: Some(2),
-                success: true,
+                ack_info: AckInfo::Module {
+                    chunk_index: 2,
+                    success: true,
+                },
             },
             Message::ClientResult {
                 task_id: task_entity.to_bits().into(),
@@ -241,21 +322,13 @@ mod tests {
             },
         ];
 
-        assert_eq!(world.get::<&Session>(session_entity).unwrap().latency, Default::default());
-        let heartbeat_encoded = heartbeat_message.encode().unwrap();
-        atomic_client.lock().await.write_all(&heartbeat_encoded).await.unwrap();
-        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert!(world.get::<&Session>(session_entity).unwrap().latency.as_nanos() > 0);
+        world
+            .get::<&mut SessionHealth>(session_entity)
+            .unwrap()
+            .status = SessionStatus::Occupied;
 
-        assert_eq!(world.get::<&Session>(session_entity).unwrap().device_ram, 1024);
-        let ready_encoded = ready_message.encode().unwrap();
-        atomic_client.lock().await.write_all(&ready_encoded).await.unwrap();
-        NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert_eq!(world.get::<&Session>(session_entity).unwrap().device_ram, 2048);
-
-        world.get::<&mut SessionHealth>(session_entity).unwrap().status = SessionStatus::Occupied;
-
-        let mut encoded = messages.iter()
+        let mut encoded = messages
+            .iter()
             .map(|m| m.encode().unwrap())
             .collect::<Vec<_>>()
             .concat();
@@ -266,17 +339,30 @@ mod tests {
             client_owned.lock().await.write_all(&half).await.unwrap();
             client_owned.lock().await.flush().await.unwrap();
         });
+
         atomic_client.lock().await.write_all(&encoded).await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         job_handle.await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert!(world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks[2]);
-        assert_eq!(world.get::<&TaskState>(task_entity).unwrap().phase, TaskStatePhase::Completed);
-        assert_eq!(world.get::<&Task>(task_entity).unwrap().result, vec![Type::I32(0xcc), Type::I32(0xdd)]);
+        let acked = &world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks;
+        assert_eq!(*acked, bits![0, 0, 1, 0]);
+        let phase = &world.get::<&TaskState>(task_entity).unwrap().phase;
+        assert_eq!(*phase, TaskStatePhase::Completed);
+        let result = &world.get::<&Task>(task_entity).unwrap().result;
+        assert_eq!(*result, vec![Type::I32(0xcc), Type::I32(0xdd)]);
+    }
 
-        atomic_client.lock().await.shutdown().await.unwrap();
+    #[tokio::test]
+    async fn test_process_inbound_disconnect() {
+        let (mut client, server) = duplex(1024);
+        let mut world = World::new();
+
+        let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
+
+        client.shutdown().await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        assert_eq!(world.get::<&SessionHealth>(session_entity).unwrap().status, SessionStatus::Disconnected);
+        let status = &world.get::<&SessionHealth>(session_entity).unwrap().status;
+        assert_eq!(*status, SessionStatus::Disconnected);
     }
 
     #[tokio::test]

@@ -12,7 +12,7 @@ pub struct TaskSystem;
 
 impl TaskSystem {
     pub fn assign_tasks(world: &mut World) {
-        #[derive(Eq, PartialEq)]
+        #[derive(Debug, Eq, PartialEq)]
         struct TaskRecord {
             entity: Entity,
             module: String,
@@ -22,16 +22,18 @@ impl TaskSystem {
         impl Ord for TaskRecord {
             fn cmp(&self, other: &Self) -> Ordering {
                 self.size.cmp(&other.size).reverse()
+                    .then_with(|| self.entity.cmp(&other.entity).reverse())
+                    .then_with(|| self.module.cmp(&other.module))
             }
         }
 
         impl PartialOrd for TaskRecord {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                self.size.partial_cmp(&other.size).map(Ordering::reverse)
+                Some(self.cmp(other))
             }
         }
 
-        #[derive(Eq, PartialEq)]
+        #[derive(Debug, Eq, PartialEq)]
         struct DeviceRecord {
             entity: Entity,
             cache: HashSet<String>,
@@ -41,12 +43,13 @@ impl TaskSystem {
         impl Ord for DeviceRecord {
             fn cmp(&self, other: &Self) -> Ordering {
                 self.ram.cmp(&other.ram)
+                    .then_with(|| self.entity.cmp(&other.entity))
             }
         }
 
         impl PartialOrd for DeviceRecord {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                self.ram.partial_cmp(&other.ram)
+                Some(self.cmp(other))
             }
         }
 
@@ -68,7 +71,7 @@ impl TaskSystem {
             .filter(|&(_, (_, health))| health.status == SessionStatus::Connected)
             .map(|(entity, (session, _))| DeviceRecord {
                 ram: session.device_ram as usize,
-                cache: session.cached_modules.clone(),
+                cache: session.modules.clone(),
                 entity,
             })
             .collect::<BinaryHeap<_>>();
@@ -84,20 +87,10 @@ impl TaskSystem {
 
             let start_idx = available_devices.partition_point(|d| d.ram < required_ram);
 
-            let chosen = available_devices[start_idx..].iter().fold(
-                (None, None),
-                |(mut cached, mut uncached), d| {
-                    if d.cache.contains(module_name) {
-                        if cached.map_or(true, |c: &DeviceRecord| d.ram < c.ram) {
-                            cached = Some(d);
-                        }
-                    } else if uncached.map_or(true, |c: &DeviceRecord| d.ram < c.ram) {
-                        uncached = Some(d);
-                    }
-                    (cached, uncached)
-                },
-            );
-            let chosen = chosen.0.or(chosen.1);
+            let chosen = available_devices[start_idx..]
+                .iter()
+                .find(|d| d.cache.contains(module_name))
+                .or(available_devices[start_idx..].iter().next());
 
             if let Some(device) = chosen {
                 let pos = available_devices
@@ -124,92 +117,95 @@ impl TaskSystem {
                     )
                 };
 
-                if let Ok((session, health)) = world.query_one_mut::<(&mut Session, &mut SessionHealth)>(device_record.entity) {
-                    let chunk_count = module.total_chunks as usize;
-                    let module_name = module.name.to_owned();
-                    health.status = SessionStatus::Occupied;
+                let chunk_count = module.total_chunks as usize;
 
-                    session.message_queue.push_back(Message::ServerTask {
-                        task_id: task_record.entity.to_bits().into(),
-                        module,
-                        params,
-                    });
+                let (session, health) = world
+                    .query_one_mut::<(&mut Session, &mut SessionHealth)>(device_record.entity)
+                    .unwrap();
+                health.status = SessionStatus::Occupied;
+                session.message_queue.push_back(Message::ServerTask {
+                    task_id: task_record.entity.to_bits().into(),
+                    module,
+                    params,
+                });
 
-                    if session.cached_modules.contains(&module_name) {
-                        if let Ok(mut state) = world.get::<&mut TaskState>(task_record.entity) {
-                            state.phase = TaskStatePhase::Executing;
-                            info!("Task {:?} found shortcut device {:?}, moving to executing phase", task_record.entity, device_record.entity);
-                        }
-                    } else {
-                        world
-                            .insert_one(
-                                task_record.entity,
-                                TaskTransfer {
-                                    state: TaskTransferState::Prepared,
-                                    acked_chunks: BitVec::repeat(false, chunk_count),
-                                },
-                            )
-                            .unwrap();
-                    }
-                }
+                world
+                    .insert_one(
+                        task_record.entity,
+                        TaskTransfer {
+                            state: TaskTransferState::Pending,
+                            acked_chunks: BitVec::repeat(false, chunk_count),
+                        },
+                    )
+                    .unwrap();
             }
         }
     }
 
     pub fn distribute_chunks(world: &mut World) {
-        let distributing_tasks = world
+        let distributed_tasks = world
             .query::<(&Task, &TaskState, &TaskTransfer)>()
             .iter()
             .filter_map(|(task_entity, (task, state, transfer))| {
-                state.assigned_device.map(|device_entity| {
-                    let messages = task
+                let device_entity = state.assigned_device?;
+
+                let messages = match transfer.state {
+                    TaskTransferState::Requested => task
                         .module_binary
                         .chunks(task.chunk_size as usize)
                         .enumerate()
-                        .filter(|(chunk_idx, _)| {
-                            !matches!(transfer.state, TaskTransferState::Scheduled)
-                                && !transfer.acked_chunks[*chunk_idx]
-                        })
+                        .filter(|(chunk_idx, _)| !transfer.acked_chunks[*chunk_idx])
                         .map(|(chunk_idx, chunk)| Message::ServerModule {
                             task_id: task_entity.to_bits().into(),
                             chunk_index: chunk_idx as u32,
                             chunk_data: chunk.to_vec(),
                         })
-                        .collect::<Vec<_>>();
+                        .collect::<Vec<_>>(),
+                    _ => None?,
+                };
 
-                    (task_entity, device_entity, messages)
-                })
+                Some((task_entity, device_entity, messages))
             })
             .collect::<Vec<_>>();
 
-        for (task_entity, device_entity, messages) in distributing_tasks {
-            let (module_name, finish) = {
-                let (task, transfer) = world
-                    .query_one_mut::<(&Task, &TaskTransfer)>(task_entity)
-                    .unwrap();
-                (task.module_name.clone(), transfer.acked_chunks.all())
-            };
+        for (task_entity, device_entity, messages) in distributed_tasks {
+            let mut transfer = world.get::<&mut TaskTransfer>(task_entity).unwrap();
+            transfer.state = TaskTransferState::Transferring;
 
-            if finish {
-                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
-                    session.cached_modules.insert(module_name);
+            if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                debug!("Task {:?} send {} messages to device {:?}", task_entity, messages.len(), device_entity);
+                session.message_queue.extend(messages);
+            }
+        }
+    }
+
+    pub fn finalize_tasks(world: &mut World) {
+        let finalized_transfer = world
+            .query::<(&Task, &TaskState, &TaskTransfer)>()
+            .iter()
+            .filter_map(|(task_entity, (task, state, transfer))| {
+                let device_entity = state.assigned_device?;
+
+                if matches!(transfer.state, TaskTransferState::Transferring) && transfer.acked_chunks.all() {
+                    Some((task_entity, device_entity, task.module_name.clone(), state.phase.clone()))
+                } else {
+                    None?
                 }
+            })
+            .collect::<Vec<_>>();
 
+        for (task_entity, device_entity, module_name, phase) in finalized_transfer {
+            if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
+                session.modules.insert(module_name);
+            }
+
+            if matches!(phase, TaskStatePhase::Distributing) {
                 if let Ok(mut state) = world.get::<&mut TaskState>(task_entity) {
                     state.phase = TaskStatePhase::Executing;
-                    info!("Task {:?} all chunks acknowledged, moving to executing phase", task_entity);
-                }
-
-                world.remove_one::<TaskTransfer>(task_entity).ok();
-            } else if !messages.is_empty() {
-                let mut transfer = world.get::<&mut TaskTransfer>(task_entity).unwrap();
-                transfer.state = TaskTransferState::Scheduled;
-
-                if let Ok(mut session) = world.get::<&mut Session>(device_entity) {
-                    session.message_queue.extend(messages);
-                    debug!("Task {:?} send {} messages to device {:?}", task_entity, session.message_queue.len(), device_entity);
                 }
             }
+
+            world.remove_one::<TaskTransfer>(task_entity).ok();
         }
     }
 }
@@ -256,7 +252,7 @@ mod tests {
                 device_ram: ram as u64,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
-                cached_modules: modules,
+                modules,
             },
             SessionHealth {
                 retries: 0,
@@ -269,55 +265,88 @@ mod tests {
     #[test]
     fn test_assign_tasks() {
         let mut world = World::new();
-        let large_task = create_mock_task(&mut world, "large_task", 50, 16);
-        let small_task = create_mock_task(&mut world, "small_task", 25, 16);
+        let tasks = (0..6)
+            .map(|i| {
+                if i % 2 == 0 {
+                    create_mock_task(&mut world, "large_task", 50, 16)
+                } else {
+                    create_mock_task(&mut world, "small_task", 25, 16)
+                }
+            })
+            .collect::<Vec<_>>();
         let large_device = create_mock_device(&mut world, 2048 + 60, &[] as &[&str]);
-        let small_device = create_mock_device(&mut world, 2048 + 35, &["small_task"]); 
+        let small_device = create_mock_device(&mut world, 2048 + 35, &["small_task"]);
 
-        TaskSystem::assign_tasks(&mut world);
+        let test_phases = vec![
+            (vec![1, 3], vec![small_device, large_device]),
+            (vec![0, 5], vec![large_device, small_device]),
+            (vec![2], vec![large_device]),
+            (vec![4], vec![large_device]),
+        ];
 
-        let large_state = world.get::<&TaskState>(large_task).unwrap();
-        let small_state = world.get::<&TaskState>(small_task).unwrap();
-        assert_eq!(large_state.phase, TaskStatePhase::Distributing);
-        assert_eq!(large_state.assigned_device, Some(large_device));
-        assert_eq!(small_state.phase, TaskStatePhase::Executing);
-        assert_eq!(small_state.assigned_device, Some(small_device));
+        for (task_indices, expected_devices) in test_phases {
+            TaskSystem::assign_tasks(&mut world);
 
-        let session = world.get::<&Session>(large_device).unwrap();
-        let message = session.message_queue.front().unwrap();
-        assert!(matches!(message, Message::ServerTask { task_id, .. } if *task_id == u64::from(large_task.to_bits())));
-        let session = world.get::<&Session>(small_device).unwrap();
-        let message = session.message_queue.front().unwrap();
-        assert!(matches!(message, Message::ServerTask { task_id, .. } if *task_id == u64::from(small_task.to_bits())));
+            for (i, &device) in task_indices.iter().zip(expected_devices.iter()) {
+                let state = world.get::<&TaskState>(tasks[*i]).unwrap();
+                assert_eq!(state.phase, TaskStatePhase::Distributing);
+                assert_eq!(state.assigned_device, Some(device));
+            }
+
+            for &device in expected_devices.iter() {
+                if let Ok(mut health) = world.get::<&mut SessionHealth>(device) {
+                    health.status = SessionStatus::Connected;
+                }
+            }
+        }
     }
 
     #[test]
     fn test_distribute_chunks() {
         let mut world = World::new();
-        let task = create_mock_task(&mut world, "mock_task", 30, 16);
+        let task = create_mock_task(&mut world, "mock_task", 25, 16);
         let device = create_mock_device(&mut world, 4096, &[] as &[&str]);
 
         TaskSystem::assign_tasks(&mut world);
+        assert_eq!(world.get::<&Session>(device).unwrap().message_queue.len(), 1);
+
+        world.get::<&mut TaskTransfer>(task).unwrap().state = TaskTransferState::Requested;
+        world.get::<&mut Session>(device).unwrap().message_queue.clear();
         TaskSystem::distribute_chunks(&mut world);
 
         let chunks = world.get::<&Session>(device).unwrap().message_queue
             .iter()
             .map(|message: &Message| match message {
                 Message::ServerModule { chunk_data, .. } => chunk_data.len(),
-                Message::ServerTask { .. } => usize::MIN,
                 _ => unreachable!(),
             })
             .collect::<Vec<_>>();
-        assert_eq!(chunks, vec![usize::MIN, 16, 14]);
+        assert_eq!(chunks, vec![16, 9]);
 
-        world.get::<&mut TaskTransfer>(task).unwrap().state = TaskTransferState::Retry;
+        world.get::<&mut TaskTransfer>(task).unwrap().state = TaskTransferState::Requested;
         world.get::<&mut TaskTransfer>(task).unwrap().acked_chunks.set(0, true);
+        world.get::<&mut Session>(device).unwrap().message_queue.clear();
         TaskSystem::distribute_chunks(&mut world);
-        assert_eq!(world.get::<&Session>(device).unwrap().message_queue.len(), 4);
+        assert_eq!(world.get::<&Session>(device).unwrap().message_queue.len(), 1);
+    }
+
+    #[test]
+    fn test_finalize_tasks() {
+        let mut world = World::new();
+        let task = create_mock_task(&mut world, "mock_task", 25, 16);
+        let device = create_mock_device(&mut world, 4096, &[] as &[&str]);
+
+        TaskSystem::assign_tasks(&mut world);
+        assert_eq!(world.get::<&Session>(device).unwrap().message_queue.len(), 1);
+        world.get::<&mut TaskTransfer>(task).unwrap().state = TaskTransferState::Requested;
+        TaskSystem::distribute_chunks(&mut world);
+
+        world.get::<&mut TaskTransfer>(task).unwrap().acked_chunks.set(0, true);
+        TaskSystem::finalize_tasks(&mut world);
+        assert_eq!(world.get::<&mut TaskTransfer>(task).unwrap().state, TaskTransferState::Transferring);
 
         world.get::<&mut TaskTransfer>(task).unwrap().acked_chunks.set(1, true);
-        TaskSystem::distribute_chunks(&mut world);
+        TaskSystem::finalize_tasks(&mut world);
         assert!(world.get::<&TaskTransfer>(task).is_err());
-        assert_eq!(world.get::<&TaskState>(task).unwrap().phase, TaskStatePhase::Executing);
     }
 }

@@ -91,9 +91,6 @@ impl Transport for TcpTransport {
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => 0,
             Err(e) => return Err(e),
         };
-        unsafe {
-            buf.advance_mut(bytes_read);
-        }
         Ok(bytes_read)
     }
 
@@ -107,7 +104,6 @@ impl Transport for TcpTransport {
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => 0,
             Err(e) => return Err(e),
         };
-        src.advance(bytes_written);
         Ok(bytes_written)
     }
 }
@@ -115,6 +111,8 @@ impl Transport for TcpTransport {
 fn main() {
     let Config { host, port, .. } = Config::new();
     let addr = format!("{}:{}", host, port);
+
+    env_logger::init();
 
     let transport = loop {
         match TcpTransport::new(&addr) {

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use common::{TestClient, TestServer};
 use hecs::Entity;
-use protocol::{Message, Type};
+use protocol::{AckInfo, Message, Type};
 use server::*;
 use tokio::io::*;
 use tokio::task::JoinSet;
@@ -32,7 +32,15 @@ async fn run_client(streams: Vec<DuplexStream>) {
                 .await
                 .unwrap();
 
-            if let Message::ServerTask { task_id, module, .. } = &task_msg {
+            if let Message::ServerTask { task_id, module, params } = task_msg {
+                let ack_msg = Message::ClientAck {
+                    task_id,
+                    ack_info: AckInfo::Task {
+                        modules: cached.as_ref().map_or(Vec::new(), |v| vec![v.clone()]),
+                    },
+                };
+                client.send(&ack_msg).await.unwrap();
+
                 if cached.as_ref().is_none_or(|name| name != &module.name) {
                     for idx in 0..module.total_chunks {
                         client
@@ -41,18 +49,24 @@ async fn run_client(streams: Vec<DuplexStream>) {
                             .unwrap();
 
                         let ack_msg = Message::ClientAck {
-                            task_id: *task_id,
-                            chunk_index: Some(idx),
-                            success: true,
+                            task_id,
+                            ack_info: AckInfo::Module {
+                                chunk_index: idx,
+                                success: true,
+                            },
                         };
                         client.send(&ack_msg).await.unwrap();
                     }
                     cached = Some(module.name.clone());
                 }
 
+                let result = params.iter().fold(0, |acc, x| match x {
+                    Type::I32(x) => acc + x,
+                    _ => acc,
+                });
                 let result_msg = Message::ClientResult {
-                    task_id: *task_id,
-                    result: vec![Type::I32(30)],
+                    task_id,
+                    result: vec![Type::I32(result)],
                 };
                 client.send(&result_msg).await.unwrap();
 
@@ -70,7 +84,7 @@ async fn run_client(streams: Vec<DuplexStream>) {
     for stream in streams {
         jobs.spawn(async move {
             let mut client = TestClient::new(stream);
-            client.handshake(None, 1024 * 8).await.unwrap();
+            client.handshake(Vec::new(), 1024 * 8).await.unwrap();
             process_client(&mut client).await;
         });
     }
@@ -88,7 +102,7 @@ async fn run_server(streams: Vec<DuplexStream>, task_count: usize) {
     let task_entities: Vec<Entity> = (0..task_count)
         .map(|i| {
             server.add_task(Task {
-                module_name: "test".into(),
+                module_name: format!("test_{}", i % 2).into(),
                 module_binary: TEST_MODULE.to_vec(),
                 params: vec![Type::I32(i as i32 * 10), Type::I32((i + 1) as i32 * 10)],
                 result: vec![],

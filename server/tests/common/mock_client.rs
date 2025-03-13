@@ -70,11 +70,11 @@ where
 
     pub async fn handshake(
         &mut self,
-        module: Option<String>,
+        modules: Vec<String>,
         ram: u64,
     ) -> Result<(), Box<dyn Error>> {
         self.send(&Message::ClientReady {
-            module_name: module,
+            modules,
             device_ram: ram,
         })
         .await

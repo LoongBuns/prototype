@@ -7,9 +7,9 @@ use hecs::Entity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskTransferState {
-    Prepared,
-    Scheduled,
-    Retry,
+    Pending,
+    Requested,
+    Transferring,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,6 @@ pub enum TaskStatePhase {
     Distributing,
     Executing,
     Completed,
-    Failed,
 }
 
 #[derive(Debug, Clone)]

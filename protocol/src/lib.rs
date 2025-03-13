@@ -40,9 +40,20 @@ pub struct ModuleMeta {
 }
 
 #[derive(bincode::Encode, bincode::Decode, Debug, Clone, PartialEq)]
+pub enum AckInfo {
+    Module {
+        chunk_index: u32,
+        success: bool,
+    },
+    Task {
+        modules: Vec<String>,
+    },
+}
+
+#[derive(bincode::Encode, bincode::Decode, Debug, Clone, PartialEq)]
 pub enum Message {
     ClientReady {
-        module_name: Option<String>,
+        modules: Vec<String>,
         device_ram: u64,
     },
     ServerTask {
@@ -57,8 +68,7 @@ pub enum Message {
     },
     ClientAck {
         task_id: u64,
-        chunk_index: Option<u32>,
-        success: bool,
+        ack_info: AckInfo,
     },
     ClientResult {
         task_id: u64,
@@ -131,7 +141,7 @@ mod tests {
     #[test]
     fn test_client_ready() {
         let msg = Message::ClientReady {
-            module_name: None,
+            modules: vec!["test".into()],
             device_ram: 0,
         };
         let encoded = msg.encode().unwrap();
@@ -179,8 +189,9 @@ mod tests {
     fn test_client_ack() {
         let msg_success = Message::ClientAck {
             task_id: 99,
-            chunk_index: None,
-            success: true,
+            ack_info: AckInfo::Task {
+                modules: vec!["test".into()],
+            },
         };
         let encoded = msg_success.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
@@ -223,7 +234,7 @@ mod tests {
     fn test_encode_invalid_message() {
         let long_string = "a".repeat(u16::MAX as usize + 1);
         let msg = Message::ClientReady {
-            module_name: Some(long_string),
+            modules: vec![long_string],
             device_ram: 0,
         };
         let result = msg.encode();
@@ -250,7 +261,7 @@ mod tests {
     #[test]
     fn test_decode_decode_error() {
         let msg = Message::ClientReady {
-            module_name: None,
+            modules: Vec::new(),
             device_ram: 0,
         };
         let mut encoded = msg.encode().unwrap();

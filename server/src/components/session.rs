@@ -39,5 +39,5 @@ pub struct Session {
     pub device_ram: u64,
     pub message_queue: VecDeque<Message>,
     pub latency: Duration,
-    pub cached_modules: HashSet<String>,
+    pub modules: HashSet<String>,
 }

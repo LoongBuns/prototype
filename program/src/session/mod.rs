@@ -12,7 +12,7 @@ use bytes::{Buf, BytesMut};
 use cache::ModuleCache;
 use events::{EventQueue, SessionEvent};
 use log::{error, info, warn};
-use protocol::{Message, Type};
+use protocol::{AckInfo, Message, Type};
 use transfer::ModuleTransfer;
 
 use crate::{Clock, Error, Executor, Transport};
@@ -86,7 +86,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
-        Self::send_ready(&mut self.shared.borrow_mut(), None)?;
+        Self::send_ready(&mut self.shared.borrow_mut(), Vec::new())?;
 
         loop {
             self.process_io();
@@ -163,7 +163,8 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
             SessionState::Transferring { task_id, retries, .. } => {
                 let mut shared = self.shared.borrow_mut();
                 if *retries > 3 {
-                    Self::send_ack(&mut shared, *task_id, None, false).unwrap();
+                    let modules: Vec<String> = shared.module_cache.keys();
+                    Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules }).unwrap();
                     self.state = SessionState::Failed;
                 }
             }
@@ -196,8 +197,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                         .put(&module_name, module.size as usize)?;
 
                     if shared.module_cache.contains_key(&module_name) {
+                        let modules: Vec<String> = shared.module_cache.keys();
                         let transfer = ModuleTransfer::new(module);
-                        Self::send_ack(&mut shared, *task_id, None, true)?;
+                        Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules })?;
                         self.state = SessionState::Transferring {
                             task_id: *task_id,
                             transfer,
@@ -228,7 +230,10 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                         chunk_data,
                     ) {
                         Ok(_) => {
-                            Self::send_ack(&mut shared, *task_id, Some(*chunk_index), true)?;
+                            Self::send_ack(&mut shared, *task_id, AckInfo::Module {
+                                chunk_index: *chunk_index,
+                                success: true,
+                            })?;
 
                             if transfer.is_complete() {
                                 let module_name = transfer.name().to_string();
@@ -246,7 +251,10 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                             }
                         }
                         Err(e) => {
-                            Self::send_ack(&mut shared, *task_id, Some(*chunk_index), false)?;
+                            Self::send_ack(&mut shared, *task_id, AckInfo::Module {
+                                chunk_index: *chunk_index,
+                                success: false,
+                            })?;
                             *retries += 1;
                             return Err(e);
                         }
@@ -268,14 +276,14 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
     }
 
     #[inline]
-    fn send_ready(state: &mut SharedState, name: Option<String>) -> Result<(), Error> {
-        let message = Message::ClientReady { module_name: name, device_ram: state.device_ram };
+    fn send_ready(state: &mut SharedState, modules: Vec<String>) -> Result<(), Error> {
+        let message = Message::ClientReady { modules, device_ram: state.device_ram };
         Self::send_message(state, &message)
     }
 
     #[inline]
-    fn send_ack(state: &mut SharedState, task_id: u64, chunk_index: Option<u32>, success: bool) -> Result<(), Error> {
-        let message = Message::ClientAck { task_id, chunk_index, success };
+    fn send_ack(state: &mut SharedState, task_id: u64, ack_info: AckInfo) -> Result<(), Error> {
+        let message = Message::ClientAck { task_id, ack_info };
         Self::send_message(state, &message)
     }
 

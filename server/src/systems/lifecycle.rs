@@ -25,7 +25,7 @@ impl LifecycleSystem {
                     device_ram: 0,
                     message_queue: VecDeque::new(),
                     latency: Duration::default(),
-                    cached_modules: HashSet::new(),
+                    modules: HashSet::new(),
                 },
                 SessionStream {
                     inner: Arc::new(Mutex::new(stream)),
@@ -105,7 +105,7 @@ mod tests {
                 device_ram: 1024,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
-                cached_modules: HashSet::new(),
+                modules: HashSet::new(),
             },
             SessionHealth {
                 retries: 0,

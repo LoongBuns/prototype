@@ -3,7 +3,7 @@ mod common;
 use std::time::{Duration, SystemTime};
 
 use common::{TestClient, TestServer};
-use protocol::{Message, Type};
+use protocol::{AckInfo, Message, Type};
 use server::*;
 use tokio::io::*;
 
@@ -22,16 +22,25 @@ const TEST_MODULE: &[u8] = &[
 
 async fn run_client(stream: DuplexStream) {
     let mut client = TestClient::new(stream);
-    client.handshake(None, 1024 * 8).await.unwrap();
+    client.handshake(Vec::new(), 1024 * 8).await.unwrap();
 
     let task_msg = client
         .receive(Some(Duration::from_millis(1)))
         .await
         .unwrap();
+
     if let Message::ServerTask { task_id, module, .. } = task_msg {
         assert_eq!(module.name, "test");
         assert_eq!(module.chunk_size, 16);
         assert_eq!(module.total_chunks, 3);
+
+        let ack_msg = Message::ClientAck {
+            task_id,
+            ack_info: AckInfo::Task {
+                modules: vec![],
+            },
+        };
+        client.send(&ack_msg).await.unwrap();
 
         for idx in 0..module.total_chunks {
             let chunk_msg = client
@@ -46,8 +55,10 @@ async fn run_client(stream: DuplexStream) {
 
             let ack_msg = Message::ClientAck {
                 task_id,
-                chunk_index: Some(idx),
-                success: true,
+                ack_info: AckInfo::Module {
+                    chunk_index: idx,
+                    success: true,
+                },
             };
             client.send(&ack_msg).await.unwrap();
         }
