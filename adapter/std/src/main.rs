@@ -80,17 +80,13 @@ impl Transport for TcpTransport {
     where
         B: BufMut + ?Sized,
     {
-        let dst = buf.chunk_mut();
-        let dst_slice = unsafe {
-            let uninit_slice = dst.as_uninit_slice_mut();
-            &mut *(uninit_slice as *mut [std::mem::MaybeUninit<u8>] as *mut [u8])
-        };
-
-        let bytes_read = match self.stream.read(dst_slice) {
+        let mut buffer = [0u8; 2048];
+        let bytes_read = match self.stream.read(&mut buffer) {
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => 0,
             Err(e) => return Err(e),
         };
+        buf.put_slice(&buffer[..bytes_read]);
         Ok(bytes_read)
     }
 
@@ -118,7 +114,7 @@ fn main() {
         match TcpTransport::new(&addr) {
             Ok(t) => break t,
             Err(e) => {
-                eprintln!("Connection failed: {}, retrying in 10 seconds...", e);
+                log::error!("Connection failed: {}, retrying in 10 seconds...", e);
                 std::thread::sleep(Duration::from_secs(10));
             }
         }
@@ -127,7 +123,7 @@ fn main() {
     let executor = WasmExecutor;
     let clock = SystemClock;
 
-    let mut session = Session::new(transport, executor, clock, 1024 * 1024);
+    let mut session = Session::new(transport, executor, clock, 1024 * 64);
 
     session.run().unwrap();
 }

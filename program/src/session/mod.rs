@@ -65,7 +65,7 @@ pub struct Session<T: Transport, E: Executor, C: Clock> {
 }
 
 impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
-    const MAX_MODULE_CACHE_SIZE: usize = 2;
+    const MAX_MODULE_CACHE_SIZE: usize = 1024 * 64;
     const MAX_BUFF_SIZE: usize = 2048;
 
     pub fn new(transport: T, executor: E, clock: C, device_ram: u64) -> Self {
@@ -100,11 +100,14 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
 
         match self.transport.read(&mut shared.incoming) {
             Ok(n) if n > 0 => {
-                while let Ok((message, consumed)) = Message::decode(&shared.incoming) {
-                    self.events
-                        .borrow_mut()
-                        .push(SessionEvent::Message(message));
-                    shared.incoming.advance(consumed);
+                loop {
+                    match Message::decode(&shared.incoming) {
+                        Ok((message, consumed)) => {
+                            self.events.borrow_mut().push(SessionEvent::Message(message));
+                            shared.incoming.advance(consumed);
+                        }
+                        Err(_) => break,
+                    }
                 }
             }
             Err(e) => {
@@ -133,27 +136,29 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
     }
 
     fn process_events(&mut self) {
-        let events: Vec<SessionEvent> = self.events.borrow_mut().drain(..).collect();
-
-        for event in events {
-            if matches!(self.state, SessionState::Failed) {
-                break;
-            }
-            match event {
-                SessionEvent::Message(msg) => {
-                    if self.handle_message(&msg).is_err() {
-                        self.state = SessionState::Failed;
-                        break;
-                    }
-                }
-                SessionEvent::TaskTimeout(task_id) => {
-                    if let SessionState::Executing { task_id: current_id, .. } = self.state {
-                        if current_id == task_id {
+        loop {
+            let event = self.events.borrow_mut().pop();
+            if let Some(event) = event.as_ref() {
+                match event {
+                    SessionEvent::Message(msg) => {
+                        if let Err(e) = self.handle_message(&msg) {
+                            error!("Resolve message error: {:?}", e);
                             self.state = SessionState::Failed;
                             break;
                         }
                     }
+                    SessionEvent::TaskTimeout(task_id) => {
+                        warn!("Task {} timed out", task_id);
+                        if let SessionState::Executing { task_id: current_id, .. } = self.state {
+                            if current_id == *task_id {
+                                self.state = SessionState::Failed;
+                                break;
+                            }
+                        }
+                    }
                 }
+            } else {
+                break;
             }
         }
     }
@@ -182,8 +187,12 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
     fn handle_message(&mut self, msg: &Message) -> Result<(), Error> {
         match msg {
             Message::ServerTask { task_id, module, params } => {
+                info!("Received ServerTask id {} module {} params {:?}", task_id, module.name, params);
                 let module_name = module.name.clone();
                 let mut shared = self.shared.borrow_mut();
+
+                let modules: Vec<String> = shared.module_cache.keys();
+                Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules })?;
 
                 if let Some(cached) = shared.module_cache.get(&module_name) {
                     let result = self
@@ -197,9 +206,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                         .put(&module_name, module.size as usize)?;
 
                     if shared.module_cache.contains_key(&module_name) {
-                        let modules: Vec<String> = shared.module_cache.keys();
                         let transfer = ModuleTransfer::new(module);
-                        Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules })?;
                         self.state = SessionState::Transferring {
                             task_id: *task_id,
                             transfer,
@@ -236,6 +243,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                             })?;
 
                             if transfer.is_complete() {
+                                info!("Module transfer completed for task {:?}", task_id);
                                 let module_name = transfer.name().to_string();
                                 let module_data = shared
                                     .module_cache

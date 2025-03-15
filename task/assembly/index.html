@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script type="module">
+        import { run } from "./dist/release/fractal.js";
+
+        const canvas = document.getElementById('fractal');
+        const ctx = canvas.getContext('2d');
+        const width = 800, height = 600;
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const imageData = ctx.createImageData(width, height);
+        const data = run(width, height, 0, height, -0.5, 1.2, 50);
+        console.log(data);
+        imageData.data.set(new Uint8ClampedArray(data.buffer));
+        ctx.putImageData(imageData, 0, 0);
+    </script>
+</head>
+<body>
+    <canvas id="fractal"></canvas>
+</body>
+</html>

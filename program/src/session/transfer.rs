@@ -57,6 +57,15 @@ impl ModuleTransfer {
         if data.len() == expected_size {
             cache.put_slice(&self.name, index * self.chunk_size, data)?;
             self.received.set(index, true);
+
+            log::debug!(
+                "Received chunk {} ({}B) for '{}' [{}/{}]", 
+                index,
+                data.len(),
+                self.name,
+                self.received.count_ones(),
+                self.total_chunks,
+            );
             Ok(())
         } else {
             Err(Error::InvalidChunkSize(expected_size, data.len()))

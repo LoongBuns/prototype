@@ -30,7 +30,7 @@ pub fn load_modules() -> Vec<Module> {
                 const CHUNK_SIZE: i32 = 100;
                 const CENTER_X: f64 = 0.0;
                 const ZOOM: f64 = 1.0;
-                const MAX_ITER: i32 = 100;
+                const MAX_ITER: i32 = 50;
 
                 for start_row in (0..HEIGHT).step_by(CHUNK_SIZE as usize) {
                     let end_row = (start_row + CHUNK_SIZE).min(HEIGHT);

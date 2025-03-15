@@ -7,7 +7,8 @@
         "build:fractal:release": "asc src/fractal.ts --outFile dist/release/fractal.wasm --textFile dist/release/fractal.wat --target release",
         "build:debug": "npm run build:fractal:debug",
         "build:release": "npm run build:fractal:release",
-        "build": "npm run build:debug && npm run build:release"
+        "build": "npm run build:debug && npm run build:release",
+        "start": "npx serve ."
     },
     "devDependencies": {
         "assemblyscript": "^0.27"

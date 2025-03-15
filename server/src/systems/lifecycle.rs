@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::BytesMut;
 use hecs::World;
-use log::{info, warn};
+use log::{error, info, warn};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
@@ -14,30 +14,35 @@ pub struct LifecycleSystem;
 
 impl LifecycleSystem {
     const MAX_RETRIES: u8 = 5;
-    const TIMEOUT: Duration = Duration::from_secs(8);
+    const TIMEOUT: Duration = Duration::from_secs(32);
 
-    pub async fn accept_connection(world: &mut World, listener: &TcpListener) {
-        if let Ok((stream, addr)) = listener.accept().await {
-            info!("Accepted connection from {}", addr);
-            world.spawn((
-                Session {
-                    device_addr: addr,
-                    device_ram: 0,
-                    message_queue: VecDeque::new(),
-                    latency: Duration::default(),
-                    modules: HashSet::new(),
-                },
-                SessionStream {
-                    inner: Arc::new(Mutex::new(stream)),
-                    incoming: BytesMut::new(),
-                    outgoing: BytesMut::new(),
-                },
-                SessionHealth {
-                    retries: 0,
-                    status: SessionStatus::Connected,
-                    last_heartbeat: SystemTime::now(),
-                },
-            ));
+    pub async fn accept_connection(world: Arc<Mutex<World>>, listener: &TcpListener) {
+        loop {
+            match listener.accept().await {
+                Ok((stream, addr)) => {
+                    info!("Accepted connection from {}", addr);
+                    world.lock().await.spawn((
+                        Session {
+                            device_addr: addr,
+                            device_ram: 0,
+                            message_queue: VecDeque::new(),
+                            latency: Duration::default(),
+                            modules: HashSet::new(),
+                        },
+                        SessionStream {
+                            inner: Arc::new(Mutex::new(stream)),
+                            incoming: BytesMut::new(),
+                            outgoing: BytesMut::new(),
+                        },
+                        SessionHealth {
+                            retries: 0,
+                            status: SessionStatus::Connected,
+                            last_heartbeat: SystemTime::now(),
+                        },
+                    ));
+                }
+                Err(e) => error!("Accept error: {}", e),
+            }
         }
     }
 

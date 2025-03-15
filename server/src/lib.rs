@@ -1,12 +1,14 @@
 mod components;
 mod systems;
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use hecs::World;
 use log::info;
 use task::load_modules;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 
 pub use self::components::*;
 pub use self::systems::*;
@@ -17,7 +19,7 @@ pub async fn run(host: &str, port: u16) {
     let addr = format!("{}:{}", host, port);
 
     let listener = TcpListener::bind(&addr).await.unwrap();
-    let mut world = World::new();
+    let world = Arc::new(Mutex::new(World::new()));
 
     info!("Server listening on {:?}", listener.local_addr());
 
@@ -41,14 +43,21 @@ pub async fn run(host: &str, port: u16) {
             },
         )
     });
-    world.spawn_batch(tasks);
+    world.lock().await.spawn_batch(tasks);
+
+    let world_clone = world.clone();
+    tokio::spawn(async move {
+        systems::LifecycleSystem::accept_connection(world_clone, &listener).await;
+    });
 
     loop {
-        systems::LifecycleSystem::accept_connection(&mut world, &listener).await;
-        systems::LifecycleSystem::maintain_connection(&mut world).await;
-        systems::NetworkSystem::process_inbound::<TcpStream>(&mut world).await;
-        systems::TaskSystem::assign_tasks(&mut world);
-        systems::TaskSystem::distribute_chunks(&mut world);
-        systems::NetworkSystem::process_outbound::<TcpStream>(&mut world).await;
+        let mut locked = world.lock().await;
+        systems::LifecycleSystem::maintain_connection(&mut locked).await;
+        systems::NetworkSystem::process_inbound::<TcpStream>(&mut locked).await;
+        systems::TaskSystem::assign_tasks(&mut locked);
+        systems::TaskSystem::distribute_chunks(&mut locked);
+        systems::TaskSystem::finalize_tasks(&mut locked);
+        systems::NetworkSystem::process_outbound::<TcpStream>(&mut locked).await;
+        drop(locked);
     }
 }
