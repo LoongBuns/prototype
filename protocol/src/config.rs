@@ -9,7 +9,8 @@ pub struct Wifi {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: Arc<str>,
-    pub port: u16,
+    pub dispatcher_port: u16,
+    pub inspector_port: u16,
     pub wifi: Option<Wifi>,
 }
 
@@ -17,7 +18,11 @@ impl Config {
     pub fn new() -> Self {
         let host = option_env!("HOST").map_or(Arc::from("localhost"), Arc::from);
 
-        let port = option_env!("PORT")
+        let dispatcher_port = option_env!("WEB_PORT")
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(3030);
+
+        let inspector_port = option_env!("INSPECTOR_PORT")
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(3000);
 
@@ -28,6 +33,22 @@ impl Config {
                 password: Arc::from(password),
             });
 
-        Self { host, port, wifi }
+        Self {
+            host,
+            dispatcher_port,
+            inspector_port,
+            wifi,
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            host: Arc::from("localhost"),
+            dispatcher_port: 3030,
+            inspector_port: 3000,
+            wifi: None,
+        }
     }
 }

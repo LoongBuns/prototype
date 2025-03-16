@@ -102,7 +102,7 @@ async fn run_server(streams: Vec<DuplexStream>, task_count: usize) {
     let task_entities: Vec<Entity> = (0..task_count)
         .map(|i| {
             server.add_task(Task {
-                module_name: format!("test_{}", i % 2).into(),
+                module_name: format!("test_{}", i % 2),
                 module_binary: TEST_MODULE.to_vec(),
                 params: vec![Type::I32(i as i32 * 10), Type::I32((i + 1) as i32 * 10)],
                 result: vec![],

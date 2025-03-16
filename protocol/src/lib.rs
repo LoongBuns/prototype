@@ -162,9 +162,9 @@ mod tests {
             params: vec![
                 Type::Void,
                 Type::I32(-123),
-                Type::F32(3.14),
+                Type::F32(core::f32::consts::PI),
                 Type::I64(987_654_321),
-                Type::F64(2.718281828459045),
+                Type::F64(core::f64::consts::E),
                 Type::V128(123456789012345678901234567890),
             ],
         };

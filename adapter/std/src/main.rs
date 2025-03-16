@@ -105,8 +105,8 @@ impl Transport for TcpTransport {
 }
 
 fn main() {
-    let Config { host, port, .. } = Config::new();
-    let addr = format!("{}:{}", host, port);
+    let Config { host, dispatcher_port, .. } = Config::new();
+    let addr = format!("{}:{}", host, dispatcher_port);
 
     env_logger::init();
 

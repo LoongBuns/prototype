@@ -3,9 +3,9 @@ use server::run;
 
 #[tokio::main]
 async fn main() {
-    let Config { host, port, .. } = Config::new();
+    let Config { host, inspector_port, dispatcher_port, .. } = Config::new();
 
     env_logger::init();
 
-    run(&host, port).await;
+    run(&host, &[inspector_port, dispatcher_port]).await;
 }

@@ -100,14 +100,9 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
 
         match self.transport.read(&mut shared.incoming) {
             Ok(n) if n > 0 => {
-                loop {
-                    match Message::decode(&shared.incoming) {
-                        Ok((message, consumed)) => {
-                            self.events.borrow_mut().push(SessionEvent::Message(message));
-                            shared.incoming.advance(consumed);
-                        }
-                        Err(_) => break,
-                    }
+                while let Ok((message, consumed)) = Message::decode(&shared.incoming) {
+                    self.events.borrow_mut().push(SessionEvent::Message(message));
+                    shared.incoming.advance(consumed);
                 }
             }
             Err(e) => {
@@ -141,7 +136,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
             if let Some(event) = event.as_ref() {
                 match event {
                     SessionEvent::Message(msg) => {
-                        if let Err(e) = self.handle_message(&msg) {
+                        if let Err(e) = self.handle_message(msg) {
                             error!("Resolve message error: {:?}", e);
                             self.state = SessionState::Failed;
                             break;

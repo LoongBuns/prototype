@@ -308,7 +308,7 @@ mod tests {
         let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
         let task_entity = create_mock_task(&mut world, &session_entity);
 
-        let messages = vec![
+        let messages = [
             Message::ClientAck {
                 task_id: task_entity.to_bits().into(),
                 ack_info: AckInfo::Module {

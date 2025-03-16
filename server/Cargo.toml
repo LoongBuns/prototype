@@ -6,11 +6,14 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
+axum = "0.8"
 bitvec = "1"
 bytes = "1"
 env_logger = "0.11"
 hecs = "0.10"
 log = "0.4"
 protocol.workspace = true
+serde = { version = "1", features = ["derive"] }
 task.workspace = true
 tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
