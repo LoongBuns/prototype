@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime};
 use bytes::BytesMut;
 use hecs::World;
 use log::{info, warn};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
@@ -20,11 +21,13 @@ impl LifecycleSystem {
     pub fn accept_connection(world: &mut World, stream: TcpStream, addr: SocketAddr) {
         world.spawn((
             Session {
+                message_queue: VecDeque::new(),
+                modules: HashSet::new(),
+                latency: Duration::default(),
+            },
+            SessionInfo {
                 device_addr: addr,
                 device_ram: 0,
-                message_queue: VecDeque::new(),
-                latency: Duration::default(),
-                modules: HashSet::new(),
             },
             SessionStream {
                 inner: Arc::new(Mutex::new(stream)),
@@ -39,12 +42,18 @@ impl LifecycleSystem {
         ));
     }
 
-    pub async fn maintain_connection(world: &mut World) {
-        let mut pending_reconnects = Vec::new();
+    pub async fn maintain_connection<T, F>(world: &mut World, callback: F)
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        F: AsyncFn(SocketAddr) -> std::io::Result<T>,
+    {
         let mut dead_sessions = Vec::new();
         let now = SystemTime::now();
 
-        for (entity, (session, health)) in world.query::<(&mut Session, &mut SessionHealth)>().iter() {
+        for (entity, (info, session, health)) in &mut world
+            .query::<(&SessionInfo, &mut SessionStream<T>, &mut SessionHealth)>()
+            .iter()
+        {
             let elapsed = now
                 .duration_since(health.last_heartbeat)
                 .unwrap_or_default();
@@ -64,27 +73,18 @@ impl LifecycleSystem {
                 }
                 SessionStatus::Disconnected => {
                     info!("Session {:?} disconnected, attempting reconnect", entity);
-                    pending_reconnects.push((entity, session.device_addr));
+                    if let Ok(stream) = callback(info.device_addr).await {
+                        info!("Session {:?} reconnected to {} successfully", entity, info.device_addr);
+                        session.inner = Arc::new(Mutex::new(stream));
+                        health.status = SessionStatus::Connected;
+                        health.last_heartbeat = SystemTime::now();
+                    }
                 }
                 _ => {}
             }
         }
 
-        for (entity, addr) in pending_reconnects {
-            if let Ok(stream) = TcpStream::connect(addr).await {
-                info!("Session {:?} reconnected to {} successfully", entity, addr);
-                if let Ok((session, health)) = world
-                    .query_one_mut::<(&mut SessionStream<TcpStream>, &mut SessionHealth)>(entity)
-                {
-                    session.inner = Arc::new(Mutex::new(stream));
-                    health.status = SessionStatus::Connected;
-                    health.last_heartbeat = SystemTime::now();
-                }
-            }
-        }
-
         for entity in dead_sessions {
-            info!("Removing dead session {:?}", entity);
             world.despawn(entity).ok();
         }
     }
@@ -93,17 +93,23 @@ impl LifecycleSystem {
 #[cfg(test)]
 mod tests {
     use hecs::Entity;
+    use tokio::io::SimplexStream;
 
     use super::*;
 
-    fn create_mock_device(world: &mut World, timeout: Duration) -> Entity {
+    fn create_mock_device<T>(world: &mut World, timeout: Duration, stream: &Arc<Mutex<T>>) -> Entity
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         world.spawn((
-            Session {
+            SessionInfo {
                 device_addr: "0.0.0.0:0".parse().unwrap(),
                 device_ram: 1024,
-                message_queue: VecDeque::new(),
-                latency: Duration::default(),
-                modules: HashSet::new(),
+            },
+            SessionStream {
+                inner: stream.clone(),
+                incoming: BytesMut::new(),
+                outgoing: BytesMut::new(),
             },
             SessionHealth {
                 retries: 0,
@@ -116,16 +122,25 @@ mod tests {
     #[tokio::test]
     async fn test_maintain_connection() {
         let mut world = World::new();
-        let device_entity = create_mock_device(&mut world, Duration::from_secs(33));
 
-        LifecycleSystem::maintain_connection(&mut world).await;
+        let device_entity = create_mock_device(
+            &mut world,
+            Duration::from_secs(33),
+            &Arc::new(Mutex::new(SimplexStream::new_unsplit(1)))
+        );
+
+        async fn callback(_: SocketAddr) -> std::io::Result<SimplexStream> {
+            Ok(SimplexStream::new_unsplit(1))
+        }
+
+        LifecycleSystem::maintain_connection(&mut world, callback).await;
         assert_eq!(
             world.get::<&SessionHealth>(device_entity).unwrap().status,
             SessionStatus::Zombie
         );
 
         for _ in 0..5 {
-            LifecycleSystem::maintain_connection(&mut world).await;
+            LifecycleSystem::maintain_connection(&mut world, callback).await;
         }
         assert!(world.get::<&SessionHealth>(device_entity).is_err());
     }

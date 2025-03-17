@@ -1,103 +1,76 @@
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::routing::get;
-use axum::{Json, Router};
-use hecs::World;
+use axum::Router;
+use hecs::{ChangeTracker, World};
 use log::info;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 
 use crate::components::*;
 
-#[derive(serde::Serialize)]
-pub struct SessionInfo {
-    pub address: String,
-    pub ram_mb: f32,
-    pub latency_ms: u128,
-    pub status: String,
-    pub modules: Vec<String>,
-}
-
-#[derive(serde::Serialize)]
-pub struct TaskProgress {
-    pub total: u32,
-    pub completed: u32,
-}
-
-#[derive(serde::Serialize)]
-pub struct TaskInfo {
-    pub id: u64,
-    pub module: String,
-    pub state: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub progress: Option<TaskProgress>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Vec<String>>,
-}
-
-#[derive(Clone)]
-struct AppState {
+struct InspectorState {
     world: Arc<Mutex<World>>,
+    version: Arc<watch::Sender<usize>>,
+    task_tracker: Arc<Mutex<ChangeTracker<Task>>>,
+    task_state_tracker: Arc<Mutex<ChangeTracker<TaskState>>>,
 }
 
-async fn handle_sessions(State(state): State<AppState>) -> Json<Vec<SessionInfo>> {
-    let world = state.world.lock().await;
+unsafe impl Send for InspectorState {}
 
-    let sessions = world
-        .query::<(&Session, &SessionHealth)>()
-        .iter()
-        .map(|(_, (session, health))| SessionInfo {
-            address: session.device_addr.to_string(),
-            ram_mb: session.device_ram as f32 / 1024.0 / 1024.0,
-            latency_ms: session.latency.as_millis(),
-            status: format!("{:?}", health.status),
-            modules: session.modules.iter().cloned().collect(),
-        })
-        .collect::<Vec<_>>();
+impl InspectorState {
+    pub fn new(world: Arc<Mutex<hecs::World>>) -> Self {
+        let (version_tx, _) = watch::channel(0);
 
-    Json(sessions)
-}
+        Self {
+            world,
+            version: Arc::new(version_tx),
+            task_tracker: Arc::new(Mutex::new(ChangeTracker::new())),
+            task_state_tracker: Arc::new(Mutex::new(ChangeTracker::new())),
+        }
+    }
 
-async fn handle_tasks(State(state): State<AppState>) -> Json<Vec<TaskInfo>> {
-    let world = state.world.lock().await;
+    pub async fn trigger_updates(&mut self) {
+        let mut world = self.world.lock().await;
 
-    let tasks = world
-        .query::<(&Task, &TaskState, Option<&TaskTransfer>)>()
-        .iter()
-        .map(|(entity, (task, state, transfer))| {
-            let progress = transfer.map(|tr| TaskProgress {
-                total: tr.acked_chunks.len() as u32,
-                completed: tr.acked_chunks.count_ones() as u32,
-            });
+        let task_changes = {
+            let mut locked = self.task_tracker.lock().await;
+            let mut task_tracker = locked.track(&mut world);
+            task_tracker.added().len() > 0
+                || task_tracker.changed().count() > 0
+                || task_tracker.removed().len() > 0
+        };
 
-            TaskInfo {
-                id: entity.to_bits().into(),
-                module: task.module_name.clone(),
-                state: format!("{:?}", state.phase),
-                progress,
-                result: Some(task.result.iter().map(|t| format!("{:?}", t)).collect()),
-            }
-        })
-        .collect::<Vec<_>>();
+        let task_state_changes = {
+            let mut locked = self.task_state_tracker.lock().await;
+            let mut task_state_tracker = locked.track(&mut world);
+            task_state_tracker.added().len() > 0
+                || task_state_tracker.changed().count() > 0
+                || task_state_tracker.removed().len() > 0
+        };
 
-    Json(tasks)
+        if task_changes || task_state_changes {
+            self.version.send_modify(|v| *v += 1);
+        }
+    }
 }
 
 pub async fn run(world: &Arc<Mutex<World>>, addr: &str) -> Result<(), Box<dyn Error>> {
+    let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let static_files_service = ServeDir::new(assets_dir)
+        .append_index_html_on_directories(true);
+
     let listener = TcpListener::bind(addr).await?;
     info!("Inspector server listening on: {}", listener.local_addr()?);
 
-    let app_state = AppState {
-        world: world.clone(),
-    };
+    let state = InspectorState::new(world.clone());
 
     let app = Router::new()
-        .route("/api/sessions", get(handle_sessions))
-        .route("/api/tasks", get(handle_tasks))
-        .with_state(app_state)
+        .fallback_service(static_files_service)
+        // .with_state(state)
         .layer(CorsLayer::permissive());
 
     axum::serve(listener, app).await?;

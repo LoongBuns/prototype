@@ -35,7 +35,7 @@ async fn run_client(streams: Vec<DuplexStream>) {
             if let Message::ServerTask { task_id, module, params } = task_msg {
                 let ack_msg = Message::ClientAck {
                     task_id,
-                    ack_info: AckInfo::Task {
+                    ack_info: AckInfo::Module {
                         modules: cached.as_ref().map_or(Vec::new(), |v| vec![v.clone()]),
                     },
                 };
@@ -50,7 +50,7 @@ async fn run_client(streams: Vec<DuplexStream>) {
 
                         let ack_msg = Message::ClientAck {
                             task_id,
-                            ack_info: AckInfo::Module {
+                            ack_info: AckInfo::Chunk {
                                 chunk_index: idx,
                                 success: true,
                             },
@@ -92,23 +92,32 @@ async fn run_client(streams: Vec<DuplexStream>) {
     jobs.join_all().await;
 }
 
-async fn run_server(streams: Vec<DuplexStream>, task_count: usize) {
+async fn run_server(streams: Vec<DuplexStream>, module_count:usize, task_count: usize) {
     let mut server = TestServer::new();
 
     for stream in streams {
         server.add_session(stream);
     }
 
+    let modules: Vec<Entity> = (0..module_count)
+        .map(|i| {
+            server.add_module(Module {
+                name: format!("module_{}", i),
+                binary: TEST_MODULE.to_vec(),
+                dependencies:vec![],
+                chunk_size: 16
+            })
+        })
+        .collect();
+
     let task_entities: Vec<Entity> = (0..task_count)
         .map(|i| {
             server.add_task(Task {
-                module_name: format!("test_{}", i % 2),
-                module_binary: TEST_MODULE.to_vec(),
+                name: format!("task_{}", i),
                 params: vec![Type::I32(i as i32 * 10), Type::I32((i + 1) as i32 * 10)],
                 result: vec![],
                 created_at: SystemTime::now(),
-                chunk_size: 16,
-                total_chunks: 3,
+                require_module: *modules.get(i % module_count).unwrap(),
                 priority: 1,
             })
         })
@@ -145,7 +154,7 @@ async fn test_multi_sessions() {
         .try_init()
         .unwrap();
 
-    let mut server_handle = tokio::spawn(run_server(vec![server_conn1, server_conn2], 10));
+    let mut server_handle = tokio::spawn(run_server(vec![server_conn1, server_conn2], 2, 10));
     let mut client_handle = tokio::spawn(run_client(vec![client_conn1, client_conn2]));
 
     tokio::select! {

@@ -8,18 +8,18 @@ pub struct StaticModule {
     pub binary: &'static [u8],
 }
 
-fn get_static_modules() -> &'static [StaticModule] {
+pub fn get_static_modules() -> &'static [StaticModule] {
     STATIC_MODULES
 }
 
 #[derive(Debug)]
-pub struct Module {
+pub struct Task {
     pub name: String,
-    pub binary: Vec<u8>,
+    pub module: String,
     pub params: Vec<Type>,
 }
 
-pub fn load_modules() -> Vec<Module> {
+pub fn load_tasks() -> Vec<Task> {
     let mut modules = Vec::new();
 
     for module in get_static_modules().iter() {
@@ -35,9 +35,9 @@ pub fn load_modules() -> Vec<Module> {
                 for start_row in (0..HEIGHT).step_by(CHUNK_SIZE as usize) {
                     let end_row = (start_row + CHUNK_SIZE).min(HEIGHT);
 
-                    modules.push(Module {
-                        name: "fractal".into(),
-                        binary: module.binary.to_vec(),
+                    modules.push(Task {
+                        name: format!("fractal_{start_row}_{end_row}"),
+                        module: module.name.into(),
                         params: vec![
                             Type::I32(WIDTH),
                             Type::I32(HEIGHT),

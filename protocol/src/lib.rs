@@ -32,7 +32,7 @@ pub enum Type {
 }
 
 #[derive(bincode::Encode, bincode::Decode, Debug, Clone, PartialEq)]
-pub struct ModuleMeta {
+pub struct ModuleInfo {
     pub name: String,
     pub size: u64,
     pub chunk_size: u32,
@@ -41,11 +41,11 @@ pub struct ModuleMeta {
 
 #[derive(bincode::Encode, bincode::Decode, Debug, Clone, PartialEq)]
 pub enum AckInfo {
-    Module {
+    Chunk {
         chunk_index: u32,
         success: bool,
     },
-    Task {
+    Module {
         modules: Vec<String>,
     },
 }
@@ -58,7 +58,7 @@ pub enum Message {
     },
     ServerTask {
         task_id: u64,
-        module: ModuleMeta,
+        module: ModuleInfo,
         params: Vec<Type>,
     },
     ServerModule {
@@ -153,7 +153,7 @@ mod tests {
     fn test_server_task() {
         let msg = Message::ServerTask {
             task_id: 99,
-            module: ModuleMeta {
+            module: ModuleInfo {
                 name: "test".into(),
                 size: 1024,
                 chunk_size: 256,
@@ -189,7 +189,7 @@ mod tests {
     fn test_client_ack() {
         let msg_success = Message::ClientAck {
             task_id: 99,
-            ack_info: AckInfo::Task {
+            ack_info: AckInfo::Module {
                 modules: vec!["test".into()],
             },
         };

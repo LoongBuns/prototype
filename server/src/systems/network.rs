@@ -19,8 +19,14 @@ impl NetworkSystem {
         let mut task_transfer = HashMap::new();
         let mut task_result = HashMap::new();
 
-        for (entity, (session, stream, health)) in world
-            .query::<(&mut Session, &mut SessionStream<T>, &mut SessionHealth)>()
+        let module_entities: HashMap<String, Entity> = world
+            .query::<&Module>()
+            .iter()
+            .map(|(entity, module)| (module.name.clone(), entity))
+            .collect();
+
+        for (entity, (session, info, stream, health)) in world
+            .query::<(&mut Session, &mut SessionInfo, &mut SessionStream<T>, &mut SessionHealth)>()
             .iter()
         {
             let mut locked_stream = match stream.inner.try_lock() {
@@ -63,8 +69,10 @@ impl NetworkSystem {
                                 entity, modules, device_ram
                             );
                             session.modules.clear();
-                            session.modules.extend(modules);
-                            session.device_ram = device_ram;
+                            session.modules.extend(
+                                modules.iter().filter_map(|name| module_entities.get(name)),
+                            );
+                            info.device_ram = device_ram;
                         }
                     }
                     Message::ClientAck { task_id, ack_info } => {
@@ -74,9 +82,11 @@ impl NetworkSystem {
                                     "Session {:?} received client ack with info {:?} for task {:?}",
                                     entity, ack_info, task
                                 );
-                                if let AckInfo::Task { modules } = &ack_info {
+                                if let AckInfo::Module { modules } = &ack_info {
                                     session.modules.clear();
-                                    session.modules.extend(modules.clone());
+                                    session.modules.extend(
+                                        modules.iter().filter_map(|name| module_entities.get(name)),
+                                    );
                                 }
                                 task_transfer
                                     .entry(task)
@@ -106,15 +116,18 @@ impl NetworkSystem {
         }
 
         for (entity, acks) in task_transfer {
-            if let Ok((task, transfer)) = world.query_one_mut::<(&Task, &mut TaskTransfer)>(entity) {
+            let module_entity = world.get::<&Task>(entity).map(|s| s.require_module).unwrap();
+            let module_name = world.get::<&Module>(module_entity).unwrap().name.clone();
+
+            if let Ok(mut transfer) = world.get::<&mut ModuleTransfer>(entity) {
                 for ack_info in acks {
                     match ack_info {
-                        AckInfo::Module { chunk_index, success } => {
+                        AckInfo::Chunk { chunk_index, success } => {
                             transfer.acked_chunks.set(chunk_index as usize, success);
                         }
-                        AckInfo::Task { modules } => {
-                            transfer.state = TaskTransferState::Requested;
-                            if modules.contains(&task.module_name) {
+                        AckInfo::Module { modules } => {
+                            transfer.state = ModuleTransferState::Requested;
+                            if modules.contains(&module_name) {
                                 transfer.acked_chunks.fill(true);
                                 break;
                             }
@@ -128,7 +141,7 @@ impl NetworkSystem {
             let mut device_entity = None;
             if let Ok((task, state)) = world.query_one_mut::<(&mut Task, &mut TaskState)>(entity) {
                 device_entity = state.assigned_device;
-                task.result = result.to_owned();
+                task.result = result;
                 state.phase = TaskStatePhase::Completed;
             }
             if let Some(device_entity) = device_entity {
@@ -196,11 +209,14 @@ mod tests {
 
     use bitvec::prelude::*;
     use bytes::BytesMut;
-    use protocol::{ModuleMeta, Type};
+    use protocol::{ModuleInfo, Type};
     use tokio::io::{duplex, DuplexStream};
     use tokio::sync::Mutex;
 
     use super::*;
+
+    const TOTAL_SIZE: usize = 1024;
+    const CHUNK_SIZE: usize = 256;
 
     fn create_mock_network<T>(world: &mut World, stream: &Arc<Mutex<T>>) -> Entity
     where
@@ -208,11 +224,13 @@ mod tests {
     {
         world.spawn((
             Session {
-                device_addr: "0.0.0.0:0".parse().unwrap(),
-                device_ram: 1024,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
                 modules: HashSet::new(),
+            },
+            SessionInfo {
+                device_addr: "0.0.0.0:0".parse().unwrap(),
+                device_ram: 1024,
             },
             SessionStream {
                 inner: stream.clone(),
@@ -227,30 +245,36 @@ mod tests {
         ))
     }
 
-    fn create_mock_task(world: &mut World, session_entity: &Entity) -> Entity {
-        const TOTAL_SIZE: usize = 1024;
-        const CHUNK_SIZE: usize = 256;
+    fn create_mock_module(world: &mut World) -> Entity {
+        world.spawn((
+            Module {
+                name: "mock_module".into(),
+                binary: vec![0u8; TOTAL_SIZE],
+                dependencies: Vec::default(),
+                chunk_size: CHUNK_SIZE as u32,
+            },
+        ))
+    }
 
+    fn create_mock_task(world: &mut World, session_entity: &Entity, module_entity: &Entity) -> Entity {
         let total_chunks = TOTAL_SIZE.div_ceil(CHUNK_SIZE);
         world.spawn((
             Task {
-                module_name: "mock_task".into(),
-                module_binary: vec![0u8; TOTAL_SIZE],
+                name: "mock_task".into(),
                 params: vec![Type::I32(0)],
-                result: vec![],
+                result: Vec::default(),
                 created_at: SystemTime::now(),
-                chunk_size: CHUNK_SIZE as u32,
-                total_chunks: total_chunks as u32,
+                require_module: *module_entity,
                 priority: 1,
-            },
-            TaskTransfer {
-                state: TaskTransferState::Requested,
-                acked_chunks: bitvec![0; total_chunks],
             },
             TaskState {
                 phase: TaskStatePhase::Queued,
-                deadline: None,
                 assigned_device: Some(*session_entity),
+            },
+            ModuleTransfer {
+                state: ModuleTransferState::Requested,
+                acked_chunks: bitvec![0; total_chunks],
+                session: *session_entity,
             },
         ))
     }
@@ -290,12 +314,12 @@ mod tests {
             device_ram: 2048,
         };
 
-        let ram = world.get::<&Session>(session_entity).unwrap().device_ram;
+        let ram = world.get::<&SessionInfo>(session_entity).unwrap().device_ram;
         assert_eq!(ram, 1024);
         let encoded = message.encode().unwrap();
         client.write_all(&encoded).await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        let ram = world.get::<&Session>(session_entity).unwrap().device_ram;
+        let ram = world.get::<&SessionInfo>(session_entity).unwrap().device_ram;
         assert_eq!(ram, 2048);
     }
 
@@ -306,12 +330,13 @@ mod tests {
         let mut world = World::new();
 
         let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
-        let task_entity = create_mock_task(&mut world, &session_entity);
+        let module_entity = create_mock_module(&mut world);
+        let task_entity = create_mock_task(&mut world, &session_entity, &module_entity);
 
         let messages = [
             Message::ClientAck {
                 task_id: task_entity.to_bits().into(),
-                ack_info: AckInfo::Module {
+                ack_info: AckInfo::Chunk {
                     chunk_index: 2,
                     success: true,
                 },
@@ -344,7 +369,7 @@ mod tests {
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
         job_handle.await.unwrap();
         NetworkSystem::process_inbound::<DuplexStream>(&mut world).await;
-        let acked = &world.get::<&TaskTransfer>(task_entity).unwrap().acked_chunks;
+        let acked = &world.get::<&ModuleTransfer>(task_entity).unwrap().acked_chunks;
         assert_eq!(*acked, bits![0, 0, 1, 0]);
         let phase = &world.get::<&TaskState>(task_entity).unwrap().phase;
         assert_eq!(*phase, TaskStatePhase::Completed);
@@ -369,12 +394,13 @@ mod tests {
     async fn test_process_outbound() {
         let (mut client, server) = duplex(1024);
         let mut world = World::new();
+
         let session_entity = create_mock_network(&mut world, &Arc::new(Mutex::new(server)));
 
         if let Ok(mut session) = world.get::<&mut Session>(session_entity) {
             session.message_queue.push_back(Message::ServerTask {
                 task_id: 0,
-                module: ModuleMeta {
+                module: ModuleInfo {
                     name: "mock_task".into(),
                     size: 1024,
                     chunk_size: 256,

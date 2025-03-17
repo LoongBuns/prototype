@@ -19,12 +19,15 @@ impl TestServer {
         }
     }
 
+    pub fn add_module(&mut self, module: Module) -> Entity {
+        self.world.spawn((module, ))
+    }
+
     pub fn add_task(&mut self, task: Task) -> Entity {
         self.world.spawn((
             task,
             TaskState {
                 phase: TaskStatePhase::Queued,
-                deadline: None,
                 assigned_device: None,
             },
         ))
@@ -36,11 +39,13 @@ impl TestServer {
     {
         self.world.spawn((
             Session {
-                device_addr: "0.0.0.0:0".parse().unwrap(),
-                device_ram: 0,
                 message_queue: VecDeque::new(),
                 latency: Duration::default(),
                 modules: HashSet::new(),
+            },
+            SessionInfo {
+                device_addr: "0.0.0.0:0".parse().unwrap(),
+                device_ram: 0,
             },
             SessionStream {
                 inner: Arc::new(Mutex::new(stream)),
@@ -61,8 +66,8 @@ impl TestServer {
     {
         NetworkSystem::process_inbound::<T>(&mut self.world).await;
         TaskSystem::assign_tasks(&mut self.world);
-        TaskSystem::distribute_chunks(&mut self.world);
-        TaskSystem::finalize_tasks(&mut self.world);
+        TaskSystem::transfer_chunks(&mut self.world);
+        TaskSystem::finalize_transfer(&mut self.world);
         NetworkSystem::process_outbound::<T>(&mut self.world).await;
     }
 }

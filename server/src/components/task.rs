@@ -1,46 +1,31 @@
 use std::time::SystemTime;
 
-use bitvec::prelude::BitVec;
 use protocol::Type;
 
 use hecs::Entity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskTransferState {
-    Pending,
-    Requested,
-    Transferring,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskTransfer {
-    pub state: TaskTransferState,
-    pub acked_chunks: BitVec,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskStatePhase {
     Queued,
     Distributing,
-    Executing,
+    Executing {
+        deadline: SystemTime,
+    },
     Completed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TaskState {
     pub phase: TaskStatePhase,
-    pub deadline: Option<SystemTime>,
     pub assigned_device: Option<Entity>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Task {
-    pub module_name: String,
-    pub module_binary: Vec<u8>,
+    pub name: String,
     pub params: Vec<Type>,
     pub result: Vec<Type>,
     pub created_at: SystemTime,
-    pub chunk_size: u32,
-    pub total_chunks: u32,
+    pub require_module: Entity,
     pub priority: u8,
 }

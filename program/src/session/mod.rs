@@ -164,7 +164,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 let mut shared = self.shared.borrow_mut();
                 if *retries > 3 {
                     let modules: Vec<String> = shared.module_cache.keys();
-                    Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules }).unwrap();
+                    Self::send_ack(&mut shared, *task_id, AckInfo::Module { modules }).unwrap();
                     self.state = SessionState::Failed;
                 }
             }
@@ -187,7 +187,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                 let mut shared = self.shared.borrow_mut();
 
                 let modules: Vec<String> = shared.module_cache.keys();
-                Self::send_ack(&mut shared, *task_id, AckInfo::Task { modules })?;
+                Self::send_ack(&mut shared, *task_id, AckInfo::Module { modules })?;
 
                 if let Some(cached) = shared.module_cache.get(&module_name) {
                     let result = self
@@ -232,7 +232,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                         chunk_data,
                     ) {
                         Ok(_) => {
-                            Self::send_ack(&mut shared, *task_id, AckInfo::Module {
+                            Self::send_ack(&mut shared, *task_id, AckInfo::Chunk {
                                 chunk_index: *chunk_index,
                                 success: true,
                             })?;
@@ -254,7 +254,7 @@ impl<T: Transport, E: Executor, C: Clock> Session<T, E, C> {
                             }
                         }
                         Err(e) => {
-                            Self::send_ack(&mut shared, *task_id, AckInfo::Module {
+                            Self::send_ack(&mut shared, *task_id, AckInfo::Chunk {
                                 chunk_index: *chunk_index,
                                 success: false,
                             })?;

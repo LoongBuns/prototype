@@ -30,13 +30,13 @@ async fn run_client(stream: DuplexStream) {
         .unwrap();
 
     if let Message::ServerTask { task_id, module, .. } = task_msg {
-        assert_eq!(module.name, "test");
+        assert_eq!(module.name, "test_module");
         assert_eq!(module.chunk_size, 16);
         assert_eq!(module.total_chunks, 3);
 
         let ack_msg = Message::ClientAck {
             task_id,
-            ack_info: AckInfo::Task {
+            ack_info: AckInfo::Module {
                 modules: vec![],
             },
         };
@@ -55,7 +55,7 @@ async fn run_client(stream: DuplexStream) {
 
             let ack_msg = Message::ClientAck {
                 task_id,
-                ack_info: AckInfo::Module {
+                ack_info: AckInfo::Chunk {
                     chunk_index: idx,
                     success: true,
                 },
@@ -82,14 +82,18 @@ async fn run_client(stream: DuplexStream) {
 async fn run_server(stream: DuplexStream) {
     let mut server = TestServer::new();
     server.add_session(stream);
+    let module_entity = server.add_module(Module {
+        name: "test_module".into(),
+        binary: TEST_MODULE.to_vec(),
+        dependencies: vec![],
+        chunk_size: 16
+    });
     let task_entity = server.add_task(Task {
-        module_name: "test".into(),
-        module_binary: TEST_MODULE.to_vec(),
+        name: "test_task".into(),
         params: vec![Type::I32(10), Type::I32(20)],
         result: vec![],
         created_at: SystemTime::now(),
-        chunk_size: 16,
-        total_chunks: 3,
+        require_module: module_entity,
         priority: 1,
     });
 

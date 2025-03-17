@@ -1,7 +1,7 @@
 use alloc::string::String;
 
 use bitvec::vec::BitVec;
-use protocol::ModuleMeta;
+use protocol::ModuleInfo;
 
 use super::cache::ModuleCache;
 use crate::Error;
@@ -15,7 +15,7 @@ pub struct ModuleTransfer {
 }
 
 impl ModuleTransfer {
-    pub fn new(meta: &ModuleMeta) -> Self {
+    pub fn new(meta: &ModuleInfo) -> Self {
         let total_chunks = meta.total_chunks as usize;
 
         Self {
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let meta = ModuleMeta {
+        let meta = ModuleInfo {
             name: String::from("test"),
             size: (3 * 1024 + 512) as u64,
             chunk_size: 1024,
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_out_of_order() {
-        let meta = ModuleMeta {
+        let meta = ModuleInfo {
             name: String::from("test"),
             size: (2 * 1024 + 512) as u64,
             chunk_size: 1024,
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_invalid_chunk() {
-        let meta = ModuleMeta {
+        let meta = ModuleInfo {
             name: String::from("test"),
             size: 1024,
             chunk_size: 1024,
