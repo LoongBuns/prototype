@@ -1,0 +1,16 @@
+[package]
+name = "reactive"
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+paste = "1"
+serde = { version = "1", optional = true }
+slotmap = { version = "1", default-features = false }
+spin = "0.10"
+smallvec = { version = "1", features = ["union"] }
+
+[features]
+serde = ["dep:serde"]

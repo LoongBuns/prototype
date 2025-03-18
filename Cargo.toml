@@ -1,8 +1,9 @@
 [workspace]
-members = ["program", "protocol", "server", "task"]
+members = ["program", "protocol", "reactive", "server", "task"]
 exclude = ["adapter"]
 resolver = "2"
 
 [workspace.dependencies]
 protocol = { path = "protocol" }
+reactive = { path = "reactive" }
 task = { path = "task"}

@@ -96,7 +96,7 @@ where
 #[macro_export]
 macro_rules! impl_into_maybe_dyn {
     ($ty:ty $(; $($from:ty),*)?) => {
-        impl From<$ty> for $crate::reactive::MaybeDyn<$ty> {
+        impl From<$ty> for $crate::MaybeDyn<$ty> {
             fn from(val: $ty) -> Self {
                 MaybeDyn::Static(val)
             }
@@ -111,7 +111,7 @@ macro_rules! impl_into_maybe_dyn_with_convert {
     ($ty:ty; $convert:expr $(; $($from:ty),*)?) => {
         $(
             $(
-                impl From<$from> for $crate::reactive::MaybeDyn<$ty> {
+                impl From<$from> for $crate::MaybeDyn<$ty> {
                     fn from(val: $from) -> Self {
                         MaybeDyn::Static($convert(val))
                     }
