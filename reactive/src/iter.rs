@@ -32,11 +32,11 @@ where
             mapped_items.reserve(items.len());
             disposers.reserve(items.len());
 
-            for new_item in items.iter().cloned() {
+            for item in items.iter().cloned() {
                 let map_fn = &mut map_fn;
                 let mapped = &mut mapped_items;
-                let new_disposer = create_child_scope(move || mapped.push(map_fn(new_item)));
-                disposers.push(Some(new_disposer));
+                let disposer = create_child_scope(move || mapped.push(map_fn(item)));
+                disposers.push(Some(disposer));
             }
         } else {
             let (start, end, new_end) = {

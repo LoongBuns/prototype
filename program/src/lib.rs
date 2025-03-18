@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate alloc;
 
-mod reactive;
 mod session;
 
 use alloc::string::String;
@@ -11,7 +10,6 @@ use alloc::vec::Vec;
 
 pub use bytes::{Buf, BufMut};
 pub use protocol::{Config, Type};
-pub use reactive::*;
 pub use session::*;
 
 #[derive(Debug, thiserror::Error)]
