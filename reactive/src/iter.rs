@@ -5,8 +5,7 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 
 use super::FiberValue;
-use super::create_effect;
-use super::create_root;
+use super::effect::create_effect;
 use super::state::{StateHandle, state_get, state_set, use_state};
 
 type MapFn = extern "C" fn(usize, *const FiberValue) -> FiberValue;
@@ -42,7 +41,7 @@ pub extern "C" fn map_indexed(list: *mut StateHandle, map_fn: MapFn) -> *mut Sta
                 }
 
                 for (i, item) in list.iter().enumerate() {
-                    if prev_items.get(i).map_or(true, |prev| prev != item) {
+                    if prev_items.get(i) != Some(item) {
                         let mapped_value = map_fn(i, item as *const FiberValue);
                         if let Some(existing) = mapped.get_mut(i) {
                             *existing = mapped_value;

@@ -11,8 +11,8 @@ use super::create_root;
 use super::state::DynSignalInner;
 
 thread_local! {
-    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Fiber>>>>> = RefCell::new(Vec::new());
-    pub(super) static OWNER: RefCell<Option<Scope>> = RefCell::new(None);
+    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Fiber>>>>> = const { RefCell::new(Vec::new()) };
+    pub(super) static OWNER: RefCell<Option<Scope>> = const { RefCell::new(None) };
 }
 
 pub(super) struct Fiber {
@@ -101,8 +101,10 @@ impl PartialEq for Dependency {
 
 impl Eq for Dependency {}
 
+type EffectInitializer = dyn FnOnce() -> (Box<dyn FnMut()>, Box<dyn Any>);
+
 fn create_effect_internal(
-    initial: Box<dyn FnOnce() -> (Box<dyn FnMut()>, Box<dyn Any>)>,
+    initial: Box<EffectInitializer>,
 ) -> Box<dyn Any> {
     let running: Rc<RefCell<Option<Fiber>>> = Rc::new(RefCell::new(None));
 
@@ -187,7 +189,7 @@ fn create_effect_internal(
                 .unwrap()
                 .add_effect_state(running);
         } else {
-            Rc::into_raw(running); // leak running
+            let _ = Rc::into_raw(running); // leak running
         }
     });
 
@@ -267,16 +269,16 @@ mod tests {
 
     use crate::*;
 
-    #[repr(C)]
-    struct EffectContext {
-        state: *mut StateHandle,
-        double: *mut StateHandle,
-    }
-
     #[test]
     fn test_effect() {
         let state = use_state(FiberValue::I32(0));
         let double = use_state(FiberValue::I32(-1));
+
+        #[repr(C)]
+        struct EffectContext {
+            state: *mut StateHandle,
+            double: *mut StateHandle,
+        }
 
         extern "C" fn effect_callback(context: *mut ffi::c_void) {
             let context = unsafe { &*(context as *const EffectContext) };

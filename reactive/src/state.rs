@@ -61,7 +61,7 @@ pub extern "C" fn use_state(value: FiberValue) -> *mut StateHandle {
 #[unsafe(no_mangle)]
 pub extern "C" fn state_get(handle: *const StateHandle) -> FiberValue {
     if !handle.is_null() {
-        let signal = unsafe { &*(&*(handle)).0 };
+        let signal = unsafe { &*(*(handle)).0 };
 
         CONTEXTS.with(|contexts| {
             if let Some(last_context) = contexts.borrow().last() {
@@ -87,7 +87,7 @@ pub extern "C" fn state_get(handle: *const StateHandle) -> FiberValue {
 #[unsafe(no_mangle)]
 pub extern "C" fn state_get_raw(handle: *const StateHandle) -> FiberValue {
     if !handle.is_null() {
-        let signal = unsafe { &*(&*(handle)).0 };
+        let signal = unsafe { &*(*(handle)).0 };
         (*signal.borrow().inner).clone()
     } else {
         FiberValue::Void
@@ -96,7 +96,7 @@ pub extern "C" fn state_get_raw(handle: *const StateHandle) -> FiberValue {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn state_set(handle: *mut StateHandle, value: FiberValue) {
-    let signal = unsafe { &*(&*(handle)).0 };
+    let signal = unsafe { &*(*(handle)).0 };
     signal.borrow_mut().update(value);
 
     let subscribers = signal.borrow().subscribers.clone();
