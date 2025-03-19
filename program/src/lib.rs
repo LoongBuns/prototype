@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 pub use bytes::{Buf, BufMut};
 pub use protocol::{Config, Type};
-pub use session::Session;
+pub use session::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -18,7 +18,7 @@ experimental = ["esp-idf-svc/experimental"]
 [dependencies]
 esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 log = { version = "0.4", default-features = false }
-protocol = { path = "../protocol" }
+program = { path = "../../program" }
 thiserror = { version = "2", default-features = false }
 wamr-rust-sdk = { git = "https://github.com/bytecodealliance/wamr-rust-sdk", features = ["esp-idf"] }
 
