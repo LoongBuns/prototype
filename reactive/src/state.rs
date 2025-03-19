@@ -1,6 +1,5 @@
 use core::cell::{Ref, RefMut};
-use core::fmt;
-use core::fmt::Formatter;
+use core::fmt::{self, Formatter};
 use core::hash::Hash;
 use core::marker::PhantomData;
 use core::ops::{AddAssign, Deref, DivAssign, MulAssign, RemAssign, SubAssign};

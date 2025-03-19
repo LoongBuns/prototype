@@ -130,11 +130,9 @@ where
         mapped_items.truncate(items.len());
         disposers.truncate(items.len());
 
-        debug_assert!(
-            [mapped_items.len(), disposers.len()]
-                .iter()
-                .all(|l| *l == items.len())
-        );
+        debug_assert!([mapped_items.len(), disposers.len()]
+            .iter()
+            .all(|l| *l == items.len()));
         previous_items = items;
 
         mapped_items.clone()
@@ -195,11 +193,9 @@ where
 
             mapped_items.truncate(items.len());
 
-            debug_assert!(
-                [mapped_items.len(), disposers.len()]
-                    .iter()
-                    .all(|l| *l == items.len())
-            );
+            debug_assert!([mapped_items.len(), disposers.len()]
+                .iter()
+                .all(|l| *l == items.len()));
             previous_items = items;
         }
 

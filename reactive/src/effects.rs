@@ -11,10 +11,7 @@ pub fn use_effect(f: impl FnMut() + 'static) {
 }
 
 #[cfg_attr(debug_assertions, track_caller)]
-pub fn use_effect_deps<T: 'static>(
-    deps: impl Trackable + 'static,
-    f: impl FnMut() -> T + 'static
-) {
+pub fn use_effect_deps<T: 'static>(deps: impl Trackable + 'static, f: impl FnMut() -> T + 'static) {
     use_memo(on(deps, f));
 }
 

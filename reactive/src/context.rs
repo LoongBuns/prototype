@@ -1,4 +1,4 @@
-use core::any::{Any, type_name};
+use core::any::{type_name, Any};
 
 use alloc::boxed::Box;
 use slotmap::Key;
