@@ -3,10 +3,12 @@
     "version": "1.0.0",
     "type": "module",
     "scripts": {
+        "build:fiber:debug": "asc src/fiber.ts --outFile dist/debug/fiber.wasm --textFile dist/debug/fiber.wat --target debug",
+        "build:fiber:release": "asc src/fiber.ts --outFile dist/release/fiber.wasm --textFile dist/release/fiber.wat --target release",
         "build:fractal:debug": "asc src/fractal.ts --outFile dist/debug/fractal.wasm --textFile dist/debug/fractal.wat --target debug",
         "build:fractal:release": "asc src/fractal.ts --outFile dist/release/fractal.wasm --textFile dist/release/fractal.wat --target release",
-        "build:debug": "npm run build:fractal:debug",
-        "build:release": "npm run build:fractal:release",
+        "build:debug": "npm run build:fiber:debug && npm run build:fractal:debug",
+        "build:release": "npm run build:fiber:release && npm run build:fractal:release",
         "build": "npm run build:debug && npm run build:release",
         "start": "npx serve ."
     },

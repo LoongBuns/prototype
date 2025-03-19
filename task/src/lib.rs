@@ -49,7 +49,10 @@ pub fn load_tasks() -> Vec<Task> {
                         ],
                     });
                 }
-            }
+            },
+            "fiber" => {
+                
+            },
             _ => {}
         }
     }

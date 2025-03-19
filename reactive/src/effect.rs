@@ -1,7 +1,7 @@
 use core::any::Any;
 use core::cell::RefCell;
 use core::hash::{Hash, Hasher};
-use core::{mem, ptr};
+use core::{ffi, mem, ptr};
 
 use alloc::rc::{Rc, Weak};
 
@@ -198,7 +198,7 @@ fn create_effect_internal(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn use_effect(effect: extern "C" fn()) {
+pub extern "C" fn use_effect(cx: *mut ffi::c_void, effect: extern "C" fn(*mut ffi::c_void)) {
     fn internal(mut effect: Box<dyn FnMut()>) {
         create_effect_internal(Box::new(|| {
             effect();
@@ -206,7 +206,7 @@ pub extern "C" fn use_effect(effect: extern "C" fn()) {
         }));
     }
 
-    internal(Box::new(move || effect()));
+    internal(Box::new(move || effect(cx)));
 }
 
 pub fn create_effect_init<R: 'static>(
@@ -263,27 +263,41 @@ pub fn on_cleanup(f: impl FnOnce() + 'static) {
 
 #[cfg(test)]
 mod tests {
+    use core::ffi;
+
     use crate::*;
+
+    #[repr(C)]
+    struct EffectContext {
+        state: *mut StateHandle,
+        double: *mut StateHandle,
+    }
 
     #[test]
     fn test_effect() {
         let state = use_state(FiberValue::I32(0));
         let double = use_state(FiberValue::I32(-1));
 
-        create_effect(move || {
-            let result = match state_get(state) {
-                FiberValue::I32(v) => v * 2,
-                _ => 0,
-            };
-            state_set(state, FiberValue::I32(result));
-        });
+        extern "C" fn effect_callback(context: *mut ffi::c_void) {
+            let context = unsafe { &*(context as *const EffectContext) };
+            let value = state_get(context.state);
+            if let FiberValue::I32(v) = value {
+                state_set(context.double, FiberValue::I32(v * 2));
+            }
+        }
+
+        let context = Box::new(EffectContext { state, double });
+        let context_ptr = Box::into_raw(context);
+        use_effect(context_ptr as *mut ffi::c_void, effect_callback);
+
         assert_eq!(state_get(state), FiberValue::I32(0));
+        assert_eq!(state_get(double), FiberValue::I32(0)); 
 
         state_set(state, FiberValue::I32(1));
-        assert_eq!(state_get(state), FiberValue::I32(2));
+        assert_eq!(state_get(double), FiberValue::I32(2));
 
         state_set(state, FiberValue::I32(2));
-        assert_eq!(state_get(state), FiberValue::I32(4));
+        assert_eq!(state_get(double), FiberValue::I32(4));
     }
 
     #[test]

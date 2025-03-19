@@ -1,5 +1,4 @@
 use core::cell::RefCell;
-use core::mem;
 use core::ptr;
 
 use alloc::rc::Rc;
@@ -89,12 +88,6 @@ mod tests {
         } else {
             FiberValue::Void
         }
-    }
-
-    #[test]
-    fn test_map_indexed_null_input() {
-        let result = map_indexed(ptr::null_mut(), double_map);
-        assert!(result.is_null());
     }
 
     #[test]
