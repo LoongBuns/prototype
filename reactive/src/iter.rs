@@ -255,7 +255,10 @@ mod tests {
 
         if let FiberValue::List(result) = state_get(mapped) {
             let result = unsafe { &*result };
-            assert_eq!(result, &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)]);
+            assert_eq!(
+                result,
+                &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)]
+            );
         } else {
             panic!("Expected list");
         }
@@ -283,7 +286,10 @@ mod tests {
 
         if let FiberValue::List(result) = state_get(mapped) {
             let result = unsafe { &*result };
-            assert_eq!(result, &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(4)]);
+            assert_eq!(
+                result,
+                &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(4)]
+            );
         } else {
             panic!("Expected list");
         }
@@ -297,7 +303,10 @@ mod tests {
 
         if let FiberValue::List(result) = state_get(mapped) {
             let result = unsafe { &*result };
-            assert_eq!(result, &[FiberValue::I32(1), FiberValue::I32(5), FiberValue::I32(4)]);
+            assert_eq!(
+                result,
+                &[FiberValue::I32(1), FiberValue::I32(5), FiberValue::I32(4)]
+            );
         } else {
             panic!("Expected list");
         }

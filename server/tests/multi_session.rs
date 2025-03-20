@@ -92,7 +92,7 @@ async fn run_client(streams: Vec<DuplexStream>) {
     jobs.join_all().await;
 }
 
-async fn run_server(streams: Vec<DuplexStream>, module_count:usize, task_count: usize) {
+async fn run_server(streams: Vec<DuplexStream>, module_count: usize, task_count: usize) {
     let mut server = TestServer::new();
 
     for stream in streams {
@@ -104,8 +104,8 @@ async fn run_server(streams: Vec<DuplexStream>, module_count:usize, task_count: 
             server.add_module(Module {
                 name: format!("module_{}", i),
                 binary: TEST_MODULE.to_vec(),
-                dependencies:vec![],
-                chunk_size: 16
+                dependencies: vec![],
+                chunk_size: 16,
             })
         })
         .collect();

@@ -9,3 +9,8 @@ resolver = "2"
 fnv = { version = "1", default-features = false }
 hashbrown = "0.15"
 indexmap = { version = "2", default-features = false }
+wit-bindgen = { version = "0.41", optional = true }
+
+[features]
+ffi = []
+wit = ["wit-bindgen"]

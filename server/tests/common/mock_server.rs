@@ -20,7 +20,7 @@ impl TestServer {
     }
 
     pub fn add_module(&mut self, module: Module) -> Entity {
-        self.world.spawn((module, ))
+        self.world.spawn((module,))
     }
 
     pub fn add_task(&mut self, task: Task) -> Entity {

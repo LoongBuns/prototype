@@ -9,9 +9,10 @@ pub use effect::*;
 pub use iter::*;
 pub use state::*;
 
-#[derive(Debug, Clone, PartialOrd, PartialEq)]
+#[derive(Debug, Default, Clone, PartialOrd, PartialEq)]
 #[repr(C)]
 pub enum FiberValue {
+    #[default]
     Void,
     I32(i32),
     I64(i64),
@@ -23,12 +24,12 @@ pub enum FiberValue {
 #[must_use = "create_root returns the owner of the effects created inside this scope"]
 pub fn create_root<'a>(callback: impl FnOnce() + 'a) -> Scope {
     fn internal<'a>(callback: Box<dyn FnOnce() + 'a>) -> Scope {
-        OWNER.with(|owner| {
-            let outer_owner = owner.replace(Some(Scope::new()));
+        OWNER.with(|scope| {
+            let outer_scope = scope.replace(Some(Default::default()));
             callback();
 
-            owner
-                .replace(outer_owner)
+            scope
+                .replace(outer_scope)
                 .expect("Owner should be valid inside the reactive root")
         })
     }

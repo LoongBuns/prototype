@@ -60,8 +60,7 @@ impl InspectorState {
 
 pub async fn run(world: &Arc<Mutex<World>>, addr: &str) -> Result<(), Box<dyn Error>> {
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-    let static_files_service = ServeDir::new(assets_dir)
-        .append_index_html_on_directories(true);
+    let static_files_service = ServeDir::new(assets_dir).append_index_html_on_directories(true);
 
     let listener = TcpListener::bind(addr).await?;
     info!("Inspector server listening on: {}", listener.local_addr()?);

@@ -8,20 +8,47 @@ use alloc::rc::{Rc, Weak};
 use hashbrown::HashSet;
 
 use super::create_root;
-use super::state::DynSignalInner;
+use super::state::SignalEmitter;
 
 thread_local! {
-    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Fiber>>>>> = const { RefCell::new(Vec::new()) };
+    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Effect >>>>> = const { RefCell::new(Vec::new()) };
     pub(super) static OWNER: RefCell<Option<Scope>> = const { RefCell::new(None) };
 }
 
-pub(super) struct Fiber {
+#[derive(Clone)]
+pub(super) struct Dependency(pub(super) Rc<dyn SignalEmitter>);
+
+impl Dependency {
+    fn signal(&self) -> Rc<dyn SignalEmitter> {
+        Rc::clone(&self.0)
+    }
+}
+
+impl Hash for Dependency {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.0).hash(state);
+    }
+}
+
+impl PartialEq for Dependency {
+    fn eq(&self, other: &Self) -> bool {
+        ptr::eq::<()>(Rc::as_ptr(&self.0).cast(), Rc::as_ptr(&other.0).cast())
+    }
+}
+
+impl Eq for Dependency {}
+
+pub(super) struct Effect {
     pub(super) execute: Rc<RefCell<dyn FnMut()>>,
     pub(super) dependencies: HashSet<Dependency>,
     scope: Scope,
 }
 
-impl Fiber {
+impl Effect {
+    pub fn add_dependency(&mut self, signal: Rc<dyn SignalEmitter>) {
+        self.dependencies.insert(Dependency(signal));
+    }
+
     fn clear_dependencies(&mut self) {
         for dependency in &self.dependencies {
             dependency.signal().unsubscribe(Rc::as_ptr(&self.execute));
@@ -32,16 +59,12 @@ impl Fiber {
 
 #[derive(Default)]
 pub struct Scope {
-    effects: Vec<Rc<RefCell<Option<Fiber>>>>,
+    effects: Vec<Rc<RefCell<Option<Effect>>>>,
     cleanup: Vec<Box<dyn FnOnce()>>,
 }
 
 impl Scope {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub(super) fn add_effect_state(&mut self, effect: Rc<RefCell<Option<Fiber>>>) {
+    pub(super) fn add_effect(&mut self, effect: Rc<RefCell<Option<Effect>>>) {
         self.effects.push(effect);
     }
 
@@ -62,51 +85,10 @@ impl Drop for Scope {
     }
 }
 
-pub(super) type CallbackPtr = *const RefCell<dyn FnMut()>;
-
-#[derive(Clone)]
-pub(super) struct Callback(pub(super) Weak<RefCell<dyn FnMut()>>);
-
-impl Callback {
-    #[must_use = "returned value must be manually called"]
-    pub fn callback(&self) -> Option<Rc<RefCell<dyn FnMut()>>> {
-        self.0.upgrade()
-    }
-
-    pub fn as_ptr(&self) -> CallbackPtr {
-        Weak::as_ptr(&self.0)
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct Dependency(pub(super) Rc<dyn DynSignalInner>);
-
-impl Dependency {
-    fn signal(&self) -> Rc<dyn DynSignalInner> {
-        Rc::clone(&self.0)
-    }
-}
-
-impl Hash for Dependency {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.0).hash(state);
-    }
-}
-
-impl PartialEq for Dependency {
-    fn eq(&self, other: &Self) -> bool {
-        ptr::eq::<()>(Rc::as_ptr(&self.0).cast(), Rc::as_ptr(&other.0).cast())
-    }
-}
-
-impl Eq for Dependency {}
-
-type EffectInitializer = dyn FnOnce() -> (Box<dyn FnMut()>, Box<dyn Any>);
-
-fn create_effect_internal(
-    initial: Box<EffectInitializer>,
+fn create_effect_dyn(
+    initial: Box<dyn FnOnce() -> (Box<dyn FnMut()>, Box<dyn Any>)>,
 ) -> Box<dyn Any> {
-    let running: Rc<RefCell<Option<Fiber>>> = Rc::new(RefCell::new(None));
+    let running: Rc<RefCell<Option<Effect>>> = Rc::new(RefCell::new(None));
 
     let mut effect: Option<Box<dyn FnMut()>> = None;
     let ret: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::new(RefCell::new(None));
@@ -117,14 +99,14 @@ fn create_effect_internal(
         let running = Rc::downgrade(&running);
         let ret = Rc::downgrade(&ret);
         move || {
-            CONTEXTS.with(|contexts| {
-                let initial_context_size = contexts.borrow().len();
+            CONTEXTS.with(|effects| {
+                let initial_context_size = effects.borrow().len();
 
                 // Upgrade running now to make sure running is valid for the whole duration of the effect.
                 let running = running.upgrade().unwrap();
 
                 // Push new reactive scope.
-                contexts.borrow_mut().push(Rc::downgrade(&running));
+                effects.borrow_mut().push(Rc::downgrade(&running));
 
                 if let Some(initial) = initial.take() {
                     // Call initial callback.
@@ -155,25 +137,25 @@ fn create_effect_internal(
                 for dependency in &running.dependencies {
                     dependency
                         .signal()
-                        .subscribe(Callback(Rc::downgrade(&running.execute)));
+                        .subscribe(Rc::downgrade(&running.execute));
                 }
 
                 // Remove reactive context.
-                contexts.borrow_mut().pop();
+                effects.borrow_mut().pop();
 
                 debug_assert_eq!(
                     initial_context_size,
-                    contexts.borrow().len(),
+                    effects.borrow().len(),
                     "context size should not change before and after create_effect_initial"
                 );
             });
         }
     }));
 
-    *running.borrow_mut() = Some(Fiber {
+    *running.borrow_mut() = Some(Effect {
         execute: Rc::clone(&execute),
         dependencies: HashSet::new(),
-        scope: Scope::new(),
+        scope: Default::default(),
     });
     debug_assert_eq!(
         Rc::strong_count(&running),
@@ -183,11 +165,7 @@ fn create_effect_internal(
 
     OWNER.with(|scope| {
         if scope.borrow().is_some() {
-            scope
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .add_effect_state(running);
+            scope.borrow_mut().as_mut().unwrap().add_effect(running);
         } else {
             let _ = Rc::into_raw(running); // leak running
         }
@@ -199,22 +177,10 @@ fn create_effect_internal(
     ret.into_inner().unwrap()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn use_effect(cx: *mut ffi::c_void, effect: extern "C" fn(*mut ffi::c_void)) {
-    fn internal(mut effect: Box<dyn FnMut()>) {
-        create_effect_internal(Box::new(|| {
-            effect();
-            (Box::new(effect), Box::new(()))
-        }));
-    }
-
-    internal(Box::new(move || effect(cx)));
-}
-
 pub fn create_effect_init<R: 'static>(
     initial: impl FnOnce() -> (Box<dyn FnMut()>, R) + 'static,
 ) -> R {
-    let ret = create_effect_internal(Box::new(|| {
+    let ret = create_effect_dyn(Box::new(|| {
         let (effect, ret) = initial();
         (effect, Box::new(ret))
     }));
@@ -226,10 +192,22 @@ pub fn create_effect<F>(mut effect: F)
 where
     F: FnMut() + 'static,
 {
-    create_effect_internal(Box::new(|| {
+    create_effect_dyn(Box::new(|| {
         effect();
         (Box::new(effect), Box::new(()))
     }));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn use_effect(cx: *mut ffi::c_void, effect: extern "C" fn(*mut ffi::c_void)) {
+    fn internal(mut effect: Box<dyn FnMut()>) {
+        create_effect_dyn(Box::new(|| {
+            effect();
+            (Box::new(effect), Box::new(()))
+        }));
+    }
+
+    internal(Box::new(move || effect(cx)));
 }
 
 pub fn untrack<T>(f: impl FnOnce() -> T) -> T {
@@ -293,7 +271,7 @@ mod tests {
         use_effect(context_ptr as *mut ffi::c_void, effect_callback);
 
         assert_eq!(state_get(state), FiberValue::I32(0));
-        assert_eq!(state_get(double), FiberValue::I32(0)); 
+        assert_eq!(state_get(double), FiberValue::I32(0));
 
         state_set(state, FiberValue::I32(1));
         assert_eq!(state_get(double), FiberValue::I32(2));
@@ -338,7 +316,7 @@ mod tests {
             };
             state_set(counter, FiberValue::I32(result));
 
-            if matches!(state_get(condition), FiberValue::I32(0)) {
+            if state_get(condition) == FiberValue::I32(0) {
                 state_get(state1);
             } else {
                 state_get(state2);

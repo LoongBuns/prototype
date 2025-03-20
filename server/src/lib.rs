@@ -27,10 +27,7 @@ pub async fn run(host: &str, ports: &[u16]) {
         dispatcher::run(&dispatcher_world, &dispatcher_addr).await.unwrap()
     });
 
-    let (inspector_res, dispatcher_res) = tokio::join!(
-        inspector_task,
-        dispatcher_task
-    );
+    let (inspector_res, dispatcher_res) = tokio::join!(inspector_task, dispatcher_task);
 
     inspector_res.unwrap();
     dispatcher_res.unwrap();

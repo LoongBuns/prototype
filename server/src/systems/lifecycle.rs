@@ -126,7 +126,7 @@ mod tests {
         let device_entity = create_mock_device(
             &mut world,
             Duration::from_secs(33),
-            &Arc::new(Mutex::new(SimplexStream::new_unsplit(1)))
+            &Arc::new(Mutex::new(SimplexStream::new_unsplit(1))),
         );
 
         async fn callback(_: SocketAddr) -> std::io::Result<SimplexStream> {

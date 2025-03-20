@@ -59,7 +59,7 @@ impl ModuleTransfer {
             self.received.set(index, true);
 
             log::debug!(
-                "Received chunk {} ({}B) for '{}' [{}/{}]", 
+                "Received chunk {} ({}B) for '{}' [{}/{}]",
                 index,
                 data.len(),
                 self.name,

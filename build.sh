@@ -46,9 +46,9 @@ resolve_device_config() {
 
     if [[ -v DEVICE_PROFILES["$model"] ]]; then
         IFS=':' read -ra config <<< "${DEVICE_PROFILES[$model]}"
-        echo "adapter/${config[0]} +${config[1]} ${config[2]} ${config[3]}"
+        echo "samples/${config[0]} +${config[1]} ${config[2]} ${config[3]}"
     elif [[ "$model" == "std" ]]; then
-        echo "adapter/std"
+        echo "samples/std"
     else
         echo "Error: Unsupported model '$model'. Supported: std ${!DEVICE_PROFILES[*]}" >&2
         exit 1
