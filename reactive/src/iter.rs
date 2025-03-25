@@ -1,319 +1,157 @@
 use core::cell::RefCell;
-use core::ptr;
+use core::hash::Hash;
 
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 
-use super::FiberValue;
-use super::effect::create_effect;
-use super::state::{StateHandle, state_get, state_set, use_state};
+use hashbrown::HashMap;
 
-type MapFn = extern "C" fn(usize, *const FiberValue) -> FiberValue;
+use super::effect::untrack;
+use super::state::StateHandle;
+use super::{Scope, create_root};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn map_indexed(list: *mut StateHandle, map_fn: MapFn) -> *mut StateHandle {
-    if list.is_null() {
-        return ptr::null_mut();
-    }
-
-    let result = use_state(FiberValue::List(Box::into_raw(
-        Vec::new().into_boxed_slice(),
-    )));
-    let previous_items = Rc::new(RefCell::new(Vec::new()));
+pub fn map_indexed<T, U>(
+    list: StateHandle<Vec<T>>,
+    map_fn: impl Fn(&T) -> U + 'static,
+) -> impl FnMut() -> Vec<U>
+where
+    T: PartialEq + Clone + 'static,
+    U: Clone + 'static,
+{
+    let mut previous_items = Rc::new(Vec::new());
     let mapped_items = Rc::new(RefCell::new(Vec::new()));
+    let mut scopes = Vec::new();
 
-    create_effect(move || {
-        if let FiberValue::List(list_ptr) = state_get(list) {
-            if list_ptr.is_null() {
-                return;
-            }
-
-            let list = unsafe { &*list_ptr };
-            let mut prev_items = previous_items.borrow_mut();
-            let mut mapped = mapped_items.borrow_mut();
-
-            if list.is_empty() {
-                *prev_items = Vec::new();
-                *mapped = Vec::new();
+    move || {
+        let items = list.get_tracked(); // Subscribe to list.
+        untrack(|| {
+            if items.is_empty() {
+                // Fast path for removing all items.
+                scopes = Vec::new();
+                previous_items = Rc::new(Vec::new());
+                *mapped_items.borrow_mut() = Vec::new();
             } else {
-                if list.len() > prev_items.len() {
-                    mapped.reserve(list.len() - prev_items.len());
+                // Pre-allocate space needed
+                if items.len() > previous_items.len() {
+                    let count = items.len() - previous_items.len();
+                    mapped_items.borrow_mut().reserve(count);
+                    scopes.reserve(count);
                 }
 
-                for (i, item) in list.iter().enumerate() {
-                    if prev_items.get(i) != Some(item) {
-                        let mapped_value = map_fn(i, item as *const FiberValue);
-                        if let Some(existing) = mapped.get_mut(i) {
-                            *existing = mapped_value;
-                        } else {
-                            mapped.push(mapped_value);
-                        }
+                for (i, item) in items.iter().enumerate() {
+                    let previous_item = previous_items.get(i);
+
+                    if previous_item.is_none() {
+                        let new_scope = create_root(|| {
+                            mapped_items.borrow_mut().push(map_fn(item));
+                        });
+                        scopes.push(new_scope);
+                    } else if previous_item != Some(item) {
+                        let new_scope = create_root(|| {
+                            mapped_items.borrow_mut()[i] = map_fn(item);
+                        });
+                        scopes[i] = new_scope;
                     }
                 }
 
-                if list.len() < prev_items.len() {
-                    mapped.truncate(list.len());
+                if items.len() < previous_items.len() {
+                    for _ in items.len()..previous_items.len() {
+                        scopes.pop();
+                    }
                 }
 
-                *prev_items = list.to_vec();
+                // In case the new set is shorter than the old, set the length of the mapped array.
+                mapped_items.borrow_mut().truncate(items.len());
+                scopes.truncate(items.len());
+
+                // save a copy of the mapped items for the next update.
+                previous_items = Rc::clone(&items);
+                debug_assert!(
+                    [
+                        previous_items.len(),
+                        mapped_items.borrow().len(),
+                        scopes.len()
+                    ]
+                    .iter()
+                    .all(|l| *l == items.len())
+                );
             }
 
-            state_set(
-                result,
-                FiberValue::List(Box::into_raw(mapped.clone().into_boxed_slice())),
-            );
-        }
-    });
-
-    result
+            mapped_items.borrow().clone()
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use core::cell::Cell;
-    use core::ptr;
-
     use alloc::rc::Rc;
+
+    use core::cell::Cell;
 
     use crate::*;
 
-    extern "C" fn double_map(_: usize, x: *const FiberValue) -> FiberValue {
-        if x.is_null() {
-            return FiberValue::Void;
-        }
-        let x = unsafe { &*x };
-        if let FiberValue::I32(v) = x {
-            FiberValue::I32(v * 2)
-        } else {
-            FiberValue::Void
-        }
+    #[test]
+    fn indexed() {
+        let a = StateHandle::new(vec![1, 2, 3]);
+        let mut mapped = map_indexed(a.clone(), |x| *x * 2);
+        assert_eq!(mapped(), vec![2, 4, 6]);
+
+        a.set(vec![1, 2, 3, 4]);
+        assert_eq!(mapped(), vec![2, 4, 6, 8]);
+
+        a.set(vec![2, 2, 3, 4]);
+        assert_eq!(mapped(), vec![4, 4, 6, 8]);
     }
 
     #[test]
-    fn test_map_indexed() {
-        let list = use_state(FiberValue::List(Box::into_raw(
-            vec![FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)].into_boxed_slice(),
-        )));
+    fn test_indexed_clear() {
+        let a = StateHandle::new(vec![1, 2, 3]);
+        let mut mapped = map_indexed(a.clone(), |x| *x * 2);
 
-        let mapped = map_indexed(list, double_map);
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[
-                    FiberValue::I32(2), // 1 * 2
-                    FiberValue::I32(4), // 2 * 2
-                    FiberValue::I32(6), // 3 * 2
-                ]
-            );
-        } else {
-            panic!("Expected list");
-        }
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![
-                    FiberValue::I32(1),
-                    FiberValue::I32(2),
-                    FiberValue::I32(3),
-                    FiberValue::I32(4),
-                ]
-                .into_boxed_slice(),
-            )),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[
-                    FiberValue::I32(2),
-                    FiberValue::I32(4),
-                    FiberValue::I32(6),
-                    FiberValue::I32(8),
-                ]
-            );
-        } else {
-            panic!("Expected list");
-        }
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![
-                    FiberValue::I32(2),
-                    FiberValue::I32(2),
-                    FiberValue::I32(3),
-                    FiberValue::I32(4),
-                ]
-                .into_boxed_slice(),
-            )),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[
-                    FiberValue::I32(4),
-                    FiberValue::I32(4),
-                    FiberValue::I32(6),
-                    FiberValue::I32(8),
-                ]
-            );
-        } else {
-            panic!("Expected list");
-        }
+        a.set(Vec::new());
+        assert_eq!(mapped(), Vec::<i32>::new());
     }
 
     #[test]
-    fn test_map_indexed_clear() {
-        let list = use_state(FiberValue::List(Box::into_raw(
-            vec![FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)].into_boxed_slice(),
-        )));
+    fn test_indexed_react() {
+        let a = StateHandle::new(vec![1, 2, 3]);
+        let mut mapped = map_indexed(a.clone(), |x| *x * 2);
 
-        let mapped = map_indexed(list, double_map);
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(Vec::new().into_boxed_slice())),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert!(result.is_empty());
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_map_indexed_react() {
-        let list = use_state(FiberValue::List(Box::into_raw(
-            vec![FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)].into_boxed_slice(),
-        )));
-
-        let mapped = map_indexed(list, double_map);
-        let counter = use_state(FiberValue::I32(0));
-
-        create_effect(move || {
-            state_set(
-                counter,
-                FiberValue::I32(match state_get(counter) {
-                    FiberValue::I32(v) => v + 1,
-                    _ => 0,
-                }),
-            );
-            state_get(mapped);
+        let counter = StateHandle::new(0);
+        create_effect({
+            let counter = counter.clone();
+            move || {
+                counter.set(*counter.get() + 1);
+                mapped();
+            }
         });
 
-        assert_eq!(state_get(counter), FiberValue::I32(1));
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![
-                    FiberValue::I32(1),
-                    FiberValue::I32(2),
-                    FiberValue::I32(3),
-                    FiberValue::I32(4),
-                ]
-                .into_boxed_slice(),
-            )),
-        );
-
-        assert_eq!(state_get(counter), FiberValue::I32(2));
+        assert_eq!(*counter.get(), 1);
+        a.set(vec![1, 2, 3, 4]);
+        assert_eq!(*counter.get(), 2);
     }
 
     #[test]
-    fn test_map_indexed_use_previous_computation() {
+    fn test_indexed_use_previous_computation() {
+        let a = StateHandle::new(vec![1, 2, 3]);
         let counter = Rc::new(Cell::new(0));
-        let counter_clone = Rc::clone(&counter);
-
-        extern "C" fn counter_map(_: usize, x: *const FiberValue) -> FiberValue {
-            if x.is_null() {
-                return FiberValue::Void;
+        let mut mapped = map_indexed(a.clone(), {
+            let counter = Rc::clone(&counter);
+            move |_| {
+                counter.set(counter.get() + 1);
+                counter.get()
             }
-            let counter = unsafe { &*COUNTER };
-            counter.set(counter.get() + 1);
-            FiberValue::I32(counter.get())
-        }
+        });
 
-        static mut COUNTER: *const Cell<i32> = ptr::null();
+        assert_eq!(mapped(), vec![1, 2, 3]);
 
-        unsafe {
-            COUNTER = Rc::into_raw(counter_clone) as *const Cell<i32>;
-        }
+        a.set(vec![1, 2]);
+        assert_eq!(mapped(), vec![1, 2]);
 
-        let list = use_state(FiberValue::List(Box::into_raw(
-            vec![FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)].into_boxed_slice(),
-        )));
+        a.set(vec![1, 2, 4]);
+        assert_eq!(mapped(), vec![1, 2, 4]);
 
-        let mapped = map_indexed(list, counter_map);
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(3)]
-            );
-        } else {
-            panic!("Expected list");
-        }
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![FiberValue::I32(1), FiberValue::I32(2)].into_boxed_slice(),
-            )),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(result, &[FiberValue::I32(1), FiberValue::I32(2),]);
-        } else {
-            panic!("Expected list");
-        }
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(4)].into_boxed_slice(),
-            )),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[FiberValue::I32(1), FiberValue::I32(2), FiberValue::I32(4)]
-            );
-        } else {
-            panic!("Expected list");
-        }
-
-        state_set(
-            list,
-            FiberValue::List(Box::into_raw(
-                vec![FiberValue::I32(1), FiberValue::I32(3), FiberValue::I32(4)].into_boxed_slice(),
-            )),
-        );
-
-        if let FiberValue::List(result) = state_get(mapped) {
-            let result = unsafe { &*result };
-            assert_eq!(
-                result,
-                &[FiberValue::I32(1), FiberValue::I32(5), FiberValue::I32(4)]
-            );
-        } else {
-            panic!("Expected list");
-        }
-
-        // Clean up the static counter
-        unsafe {
-            let _ = Rc::from_raw(COUNTER as *const Cell<i32>);
-        }
+        a.set(vec![1, 3, 4]);
+        assert_eq!(mapped(), vec![1, 5, 4]);
     }
 }

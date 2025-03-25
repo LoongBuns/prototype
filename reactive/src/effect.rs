@@ -1,7 +1,7 @@
 use core::any::Any;
 use core::cell::RefCell;
 use core::hash::{Hash, Hasher};
-use core::{ffi, mem, ptr};
+use core::{mem, ptr};
 
 use alloc::rc::{Rc, Weak};
 
@@ -11,7 +11,7 @@ use super::create_root;
 use super::state::SignalEmitter;
 
 thread_local! {
-    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Effect >>>>> = const { RefCell::new(Vec::new()) };
+    pub(super) static CONTEXTS: RefCell<Vec<Weak<RefCell<Option<Effect>>>>> = const { RefCell::new(Vec::new()) };
     pub(super) static OWNER: RefCell<Option<Scope>> = const { RefCell::new(None) };
 }
 
@@ -85,7 +85,7 @@ impl Drop for Scope {
     }
 }
 
-fn create_effect_dyn(
+pub(super) fn create_effect_dyn(
     initial: Box<dyn FnOnce() -> (Box<dyn FnMut()>, Box<dyn Any>)>,
 ) -> Box<dyn Any> {
     let running: Rc<RefCell<Option<Effect>>> = Rc::new(RefCell::new(None));
@@ -198,18 +198,6 @@ where
     }));
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn use_effect(cx: *mut ffi::c_void, effect: extern "C" fn(*mut ffi::c_void)) {
-    fn internal(mut effect: Box<dyn FnMut()>) {
-        create_effect_dyn(Box::new(|| {
-            effect();
-            (Box::new(effect), Box::new(()))
-        }));
-    }
-
-    internal(Box::new(move || effect(cx)));
-}
-
 pub fn untrack<T>(f: impl FnOnce() -> T) -> T {
     let f = Rc::new(RefCell::new(Some(f)));
     let g = Rc::clone(&f);
@@ -243,124 +231,173 @@ pub fn on_cleanup(f: impl FnOnce() + 'static) {
 
 #[cfg(test)]
 mod tests {
-    use core::ffi;
-
     use crate::*;
 
     #[test]
     fn test_effect() {
-        let state = use_state(FiberValue::I32(0));
-        let double = use_state(FiberValue::I32(-1));
+        let trigger = StateHandle::new(());
+        let state = StateHandle::new(0);
+        let double = StateHandle::new(-1);
 
-        #[repr(C)]
-        struct EffectContext {
-            state: *mut StateHandle,
-            double: *mut StateHandle,
-        }
-
-        extern "C" fn effect_callback(context: *mut ffi::c_void) {
-            let context = unsafe { &*(context as *const EffectContext) };
-            let value = state_get(context.state);
-            if let FiberValue::I32(v) = value {
-                state_set(context.double, FiberValue::I32(v * 2));
+        create_effect({
+            let trigger = trigger.clone();
+            let state = state.clone();
+            let double = double.clone();
+            move || {
+                trigger.track();
+                double.set(*state.get_tracked() * 2);
             }
-        }
+        });
 
-        let context = Box::new(EffectContext { state, double });
-        let context_ptr = Box::into_raw(context);
-        use_effect(context_ptr as *mut ffi::c_void, effect_callback);
+        assert_eq!(*double.get_tracked(), 0);
 
-        assert_eq!(state_get(state), FiberValue::I32(0));
-        assert_eq!(state_get(double), FiberValue::I32(0));
+        state.set(1);
+        assert_eq!(*double.get_tracked(), 2);
+        state.set(2);
+        assert_eq!(*double.get_tracked(), 4);
 
-        state_set(state, FiberValue::I32(1));
-        assert_eq!(state_get(double), FiberValue::I32(2));
+        trigger.set(());
+        assert_eq!(*double.get_tracked(), 4);
+    }
 
-        state_set(state, FiberValue::I32(2));
-        assert_eq!(state_get(double), FiberValue::I32(4));
+    #[test]
+    fn test_effect_no_infinite_loop() {
+        let state = StateHandle::new(0);
+
+        create_effect({
+            let state = state.clone();
+            move || {
+                state.track();
+                state.set(0);
+            }
+        });
+
+        state.set(0);
     }
 
     #[test]
     fn test_effect_should_only_subscribe_once() {
-        let state = use_state(FiberValue::I32(0));
-        let counter = use_state(FiberValue::I32(0));
+        let state = StateHandle::new(0);
+        let counter = StateHandle::new(0);
 
-        create_effect(move || {
-            let result = match state_get_raw(counter) {
-                FiberValue::I32(v) => v + 1,
-                _ => 0,
-            };
-            state_set(counter, FiberValue::I32(result));
+        create_effect({
+            let counter = counter.clone();
+            let state = state.clone();
+            move || {
+                let result = *counter.get() + 1;
+                counter.set(result);
 
-            state_get(state);
-            state_get(state);
+                state.get_tracked();
+                state.get_tracked();
+            }
         });
 
-        assert_eq!(state_get(counter), FiberValue::I32(1));
+        assert_eq!(*counter.get_tracked(), 1);
 
-        state_set(state, FiberValue::I32(1));
-        assert_eq!(state_get(counter), FiberValue::I32(2));
+        state.set(1);
+        assert_eq!(*counter.get_tracked(), 2);
     }
 
     #[test]
     fn test_effect_should_recreate_dependencies() {
-        let condition = use_state(FiberValue::I32(0));
-        let state1 = use_state(FiberValue::I32(0));
-        let state2 = use_state(FiberValue::I32(1));
-        let counter = use_state(FiberValue::I32(0));
+        let condition = StateHandle::new(true);
+        let state1 = StateHandle::new(0);
+        let state2 = StateHandle::new(1);
+        let counter = StateHandle::new(0);
 
-        create_effect(move || {
-            let result = match state_get_raw(counter) {
-                FiberValue::I32(v) => v + 1,
-                _ => 0,
-            };
-            state_set(counter, FiberValue::I32(result));
+        create_effect({
+            let condition = condition.clone();
+            let state1 = state1.clone();
+            let state2 = state2.clone();
+            let counter = counter.clone();
+            move || {
+                counter.set(*counter.get() + 1);
 
-            if state_get(condition) == FiberValue::I32(0) {
-                state_get(state1);
-            } else {
-                state_get(state2);
+                if *condition.get_tracked() {
+                    state1.track();
+                } else {
+                    state2.track();
+                }
             }
         });
 
-        assert_eq!(state_get(counter), FiberValue::I32(1));
+        assert_eq!(*counter.get_tracked(), 1);
 
-        state_set(state1, FiberValue::I32(1));
-        assert_eq!(state_get(counter), FiberValue::I32(2));
+        state1.set(1);
+        assert_eq!(*counter.get_tracked(), 2);
 
-        state_set(state2, FiberValue::I32(1));
-        assert_eq!(state_get(counter), FiberValue::I32(2));
+        state2.set(1);
+        assert_eq!(*counter.get_tracked(), 2);
 
-        state_set(condition, FiberValue::I32(1));
-        assert_eq!(state_get(counter), FiberValue::I32(3));
+        condition.set(false);
+        assert_eq!(*counter.get_tracked(), 3);
 
-        state_set(state1, FiberValue::I32(2));
-        assert_eq!(state_get(counter), FiberValue::I32(3));
+        state1.set(2);
+        assert_eq!(*counter.get_tracked(), 3);
 
-        state_set(state2, FiberValue::I32(2));
-        assert_eq!(state_get(counter), FiberValue::I32(4));
+        state2.set(2);
+        assert_eq!(*counter.get_tracked(), 4);
     }
 
     #[test]
     fn test_effect_should_recreate_nested_inner() {
-        let counter = use_state(FiberValue::I32(0));
-        let trigger = use_state(FiberValue::Void);
+        let outer_counter = StateHandle::new(0);
+        let inner_counter = StateHandle::new(0);
+        let trigger = StateHandle::new(());
 
-        create_effect(move || {
-            state_get(trigger); // subscribe to trigger
+        create_effect({
+            let outer_counter = outer_counter.clone();
+            let inner_counter = inner_counter.clone();
+            let trigger = trigger.clone();
+            move || {
+                trigger.track();
+                outer_counter.set(*outer_counter.get() + 1);
 
-            create_effect(move || {
-                let result = match state_get_raw(counter) {
-                    FiberValue::I32(v) => v + 1,
-                    _ => 0,
-                };
-                state_set(counter, FiberValue::I32(result));
-            });
+                create_effect({
+                    let inner_counter = inner_counter.clone();
+                    let trigger = trigger.clone();
+                    move || {
+                        trigger.track();
+                        inner_counter.set(*inner_counter.get() + 1);
+                    }
+                });
+            }
         });
 
-        assert_eq!(state_get(counter), FiberValue::I32(1));
+        assert_eq!(*outer_counter.get_tracked(), 1);
+        assert_eq!(*inner_counter.get_tracked(), 1);
 
-        state_set(trigger, FiberValue::Void);
-        assert_eq!(state_get(counter), FiberValue::I32(2));
+        trigger.set(());
+
+        assert_eq!(*outer_counter.get_tracked(), 2);
+        assert_eq!(*inner_counter.get_tracked(), 2);
+    }
+
+    #[test]
+    fn test_state_cleanup() {
+        let counter = StateHandle::new(0);
+        let state = StateHandle::new(0);
+
+        create_effect({
+            let counter = counter.clone();
+            let state = state.clone();
+            move || {
+                state.track();
+                on_cleanup({
+                    let counter = counter.clone();
+                    move || {
+                        counter.set(*counter.get() + 1);
+                    }
+                });
+            }
+        });
+
+        assert_eq!(*counter.get_tracked(), 0);
+
+        state.set(1);
+        assert_eq!(*counter.get_tracked(), 1);
+
+        state.set(2);
+        assert_eq!(*counter.get_tracked(), 2);
     }
 }
