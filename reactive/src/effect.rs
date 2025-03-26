@@ -167,7 +167,10 @@ pub(super) fn create_effect_dyn(
         if scope.borrow().is_some() {
             scope.borrow_mut().as_mut().unwrap().add_effect(running);
         } else {
-            let _ = Rc::into_raw(running); // leak running
+            thread_local! {
+                static GLOBAL: RefCell<Scope> = RefCell::new(Scope::default());
+            }
+            GLOBAL.with(|global| global.borrow_mut().add_effect(running));
         }
     });
 
@@ -374,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_state_cleanup() {
+    fn test_cleanup() {
         let counter = StateHandle::new(0);
         let state = StateHandle::new(0);
 
